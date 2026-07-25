@@ -1,25 +1,28 @@
 package com.skydex.api.controller
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.skydex.api.controllers.EventoRequest
 import com.skydex.api.models.EventoMetereologico
+import com.skydex.api.models.User
 import com.skydex.api.repositories.EventoRepository
+import com.skydex.api.repositories.UserRepository
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.http.MediaType
+import org.springframework.security.test.context.support.WithMockUser
 import org.springframework.test.web.servlet.MockMvc
-import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
-import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
-import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
-import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.*
+import java.time.LocalDateTime
 import java.util.UUID
 
 @SpringBootTest
 @AutoConfigureMockMvc
-class EventoController {
+class EventoControllerTest {
+
     @Autowired
     private lateinit var mockMvc: MockMvc
 
@@ -29,33 +32,65 @@ class EventoController {
     @Autowired
     private lateinit var repository: EventoRepository
 
+    @Autowired
+    private lateinit var userRepository: UserRepository
+
+    private lateinit var usuarioTesteId: UUID
+    private val emailTeste = "teste@skydex.com"
+
+
+    // Antes de cada teste, limpamos o banco e criamos um usuário para associar aos eventos
+    @BeforeEach
+    fun setup() {
+        repository.deleteAll()
+        userRepository.deleteAll()
+
+        val user = User(
+            id = null, //banco gera no .save()
+            nome = "Piloto de Testes",
+            email = emailTeste,
+            password = "senha-criptografada-fake",
+            dataEntrada = LocalDateTime.now()
+        )
+        userRepository.save(user)
+        usuarioTesteId = user.id!!
+    }
+
     @Test
-    fun `deve registrar um novo evento e retornar 200 com ID gerado`(){
-        val novoEvento = EventoMetereologico(
+    @WithMockUser(username = "teste@skydex.com")
+    fun `deve registrar um novo evento e retornar 200 com ID gerado`() {
+
+        val novoEventoRequest = EventoRequest(
             titulo = "Aurora Boreal",
             descricao = "Luzes verdes brilhantes no céu noturno.",
             urlFoto = "https://link-da-foto.com/aurora.jpg"
         )
 
-        val jsonEnvio = objectMapper.writeValueAsString(novoEvento)
+        val jsonEnvio = objectMapper.writeValueAsString(novoEventoRequest)
 
         mockMvc.perform(
             post("/api/eventos")
-                .contentType(MediaType.APPLICATION_JSON).content(jsonEnvio)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(jsonEnvio)
         )
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.id").exists())
             .andExpect(jsonPath("$.titulo").value("Aurora Boreal"))
+            .andExpect(jsonPath("$.user_id").value(usuarioTesteId.toString()))
     }
 
     @Test
+    @WithMockUser
     fun `deve listar todos os eventos e retornar 200`() {
-
-        repository.deleteAll()
-
         val eventos = listOf(
-            EventoMetereologico(titulo = "Aurora Boreal", descricao = "luzes", urlFoto = "http://foto1.jpg"),
-            EventoMetereologico(titulo = "Eclipse", descricao = "eclipse lunar", urlFoto = "http://foto2.jpg")
+            EventoMetereologico(
+                id = UUID.randomUUID(), titulo = "Aurora Boreal", descricao = "luzes", urlFoto = "http://foto1.jpg",
+                dataHoraRegistro = LocalDateTime.now(), user_id = usuarioTesteId
+            ),
+            EventoMetereologico(
+                id = UUID.randomUUID(), titulo = "Eclipse", descricao = "eclipse lunar", urlFoto = "http://foto2.jpg",
+                dataHoraRegistro = LocalDateTime.now(), user_id = usuarioTesteId
+            )
         )
 
         repository.saveAll(eventos)
@@ -71,75 +106,80 @@ class EventoController {
     }
 
     @Test
+    @WithMockUser
     fun `deve buscar um novo evento e retornar 200`() {
-        repository.deleteAll()
-
-        val eventoNovo = EventoMetereologico(titulo = "Aurora Boreal", descricao = "luzes", urlFoto = "http://foto1.jpg")
+        val eventoNovo = EventoMetereologico(
+            id = UUID.randomUUID(), titulo = "Aurora Boreal", descricao = "luzes", urlFoto = "http://foto1.jpg",
+            dataHoraRegistro = LocalDateTime.now(), user_id = usuarioTesteId
+        )
         val eventoSalvo = repository.save(eventoNovo)
         val idGerado = eventoSalvo.id!!
 
         mockMvc.perform(
             get("/api/eventos/{id}", idGerado)
-            .contentType(MediaType.APPLICATION_JSON)
+                .contentType(MediaType.APPLICATION_JSON)
         )
-        .andExpect(status().isOk)
-        .andExpect {jsonPath("$.id").value(idGerado.toString())}
-        .andExpect{jsonPath("$.titulo").value("Aurora Boreal")}
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.id").value(idGerado.toString()))
+            .andExpect(jsonPath("$.titulo").value("Aurora Boreal"))
     }
 
     @Test
+    @WithMockUser
     fun `deve atualizar um evento existente e retornar 200`() {
-        // 1. PREPARAÇÃO: Salva um evento antigo no banco
-        repository.deleteAll()
-        val eventoAntigo = EventoMetereologico(titulo = "Titulo Antigo", descricao = "Descricao Antiga", urlFoto = "url1.jpg")
+        val eventoAntigo = EventoMetereologico(
+            id = UUID.randomUUID(), titulo = "Titulo Antigo", descricao = "Descricao Antiga", urlFoto = "url1.jpg",
+            dataHoraRegistro = LocalDateTime.now(), user_id = usuarioTesteId
+        )
         val eventoSalvo = repository.save(eventoAntigo)
         val idGerado = eventoSalvo.id!!
 
-        // Cria os dados novos que o "telemóvel" vai enviar
-        val dadosNovos = EventoMetereologico(titulo = "Tornado Confirmado", descricao = "Tornado tocou o solo", urlFoto = "url2.jpg")
+        // Enviando DTO (Request) no PUT
+        val dadosNovos = EventoRequest(
+            titulo = "Tornado Confirmado",
+            descricao = "Tornado tocou o solo",
+            urlFoto = "url2.jpg"
+        )
         val jsonEnvio = objectMapper.writeValueAsString(dadosNovos)
 
-        // 2. AÇÃO E VERIFICAÇÃO (PUT)
         mockMvc.perform(
             put("/api/eventos/{id}", idGerado)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(jsonEnvio)
         )
             .andExpect(status().isOk)
-            .andExpect(jsonPath("$.titulo").value("Tornado Confirmado")) // Verifica se o título mudou
-            .andExpect(jsonPath("$.urlFoto").value("url2.jpg")) // Verifica se a foto mudou
+            .andExpect(jsonPath("$.titulo").value("Tornado Confirmado"))
+            .andExpect(jsonPath("$.urlFoto").value("url2.jpg"))
     }
 
     @Test
+    @WithMockUser
     fun `deve eliminar um evento existente e retornar 204 No Content`() {
-        // 1. PREPARAÇÃO
-        repository.deleteAll()
-        val evento = EventoMetereologico(titulo = "Evento para apagar", descricao = "...", urlFoto = "url.jpg")
+        val evento = EventoMetereologico(
+            id = UUID.randomUUID(), titulo = "Evento para apagar", descricao = "...", urlFoto = "url.jpg",
+            dataHoraRegistro = LocalDateTime.now(), user_id = usuarioTesteId
+        )
         val eventoSalvo = repository.save(evento)
         val idGerado = eventoSalvo.id!!
 
-        // 2. AÇÃO (DELETE)
         mockMvc.perform(
             delete("/api/eventos/{id}", idGerado)
         )
-            .andExpect(status().isNoContent) // O status correto para um Delete de sucesso é 204
+            .andExpect(status().isNoContent)
 
-        // 3. VERIFICAÇÃO EXTRA: O banco de dados deve estar vazio agora!
         val aindaExiste = repository.existsById(idGerado)
-        assert(!aindaExiste) // O Kotlin confirma que "aindaExiste" é falso
+        assert(!aindaExiste)
     }
 
     @Test
+    @WithMockUser
     fun `deve retornar erro 404 Not Found ao procurar um ID que nao existe`() {
-        // 1. PREPARAÇÃO: Geramos um UUID aleatório que com certeza não está na base de dados
         val idFalso = UUID.randomUUID()
 
-        // 2. AÇÃO E VERIFICAÇÃO
         mockMvc.perform(
             get("/api/eventos/{id}", idFalso)
                 .contentType(MediaType.APPLICATION_JSON)
         )
-            .andExpect(status().isNotFound) // Verifica se o Controller caiu no bloco "else" e retornou 404
+            .andExpect(status().isNotFound)
     }
-
 }

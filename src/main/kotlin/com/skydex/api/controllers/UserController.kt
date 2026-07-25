@@ -2,21 +2,41 @@ package com.skydex.api.controllers
 
 import com.skydex.api.models.User
 import com.skydex.api.repositories.UserRepository
+import jakarta.validation.Valid
+import jakarta.validation.constraints.Email
+import jakarta.validation.constraints.NotBlank
 import org.springframework.http.ResponseEntity
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.web.bind.annotation.*
 import java.util.UUID
 
+data class UserRequest(
+    @field:NotBlank(message = "Nome de usuário nao deve ser nulo")
+    val username: String,
+
+    @field:NotBlank(message = "Email nao deve ser nulo")
+    @field:Email(message = "E-mail deve ter formato valido")
+    val email: String,
+
+    @field:NotBlank(message = "Senha nao deve ser nulo")
+    val password: String,
+)
+
 @RestController
 @RequestMapping("/api/users")
 class UserController(
     private val repo: UserRepository,
-    private val passowdEncoder: PasswordEncoder
+    private val passwordEncoder: PasswordEncoder
 ) {
     @PostMapping
-    fun CriarUsuario(@RequestBody user: User): ResponseEntity<User> {
-        user.password = passowdEncoder.encode(user.password)
-        val userSalvo = repo.save(user)
+    fun CriarUsuario(@Valid @RequestBody user: UserRequest): ResponseEntity<User> {
+        val userNovo = User(
+            nome = user.username,
+            email = user.email,
+            password = passwordEncoder.encode(user.password)
+        )
+
+        val userSalvo = repo.save(userNovo)
         return ResponseEntity.ok(userSalvo)
     }
 
@@ -38,18 +58,15 @@ class UserController(
     }
 
     @PutMapping("/{id}")
-    fun updateUser(@PathVariable id: UUID, @RequestBody user: User): ResponseEntity<User> {
+    fun updateUser(@PathVariable id: UUID, @RequestBody user: UserRequest): ResponseEntity<User> {
         var userBusca = repo.findById(id)
 
         if (userBusca.isPresent) {
             val userOriginal = userBusca.get()
 
-            userOriginal.nome = user.nome
+            userOriginal.nome = user.username
             userOriginal.email = user.email
-            userOriginal.password = passowdEncoder.encode(user.password)
-            userOriginal.dataEntrada = user.dataEntrada
-
-
+            userOriginal.password = passwordEncoder.encode(user.password)
 
             val userSalvo = repo.save(userOriginal)
             return ResponseEntity.ok(userSalvo)

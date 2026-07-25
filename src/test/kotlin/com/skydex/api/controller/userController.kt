@@ -1,27 +1,27 @@
 package com.skydex.api.controller
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.skydex.api.controllers.UserRequest // Confirme se o import do seu DTO está correto
 import com.skydex.api.models.User
 import com.skydex.api.repositories.UserRepository
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.http.MediaType
 import org.springframework.security.crypto.password.PasswordEncoder
+import org.springframework.security.test.context.support.WithMockUser
 import org.springframework.test.web.servlet.MockMvc
-import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
-import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
-import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
-import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.*
 import java.time.LocalDateTime
 import java.util.UUID
 
 @SpringBootTest
 @AutoConfigureMockMvc
-class UserController(@Autowired private val passwordEncoder: PasswordEncoder) {
+class UserControllerTest { // MUDANÇA: Corrigido o nome da classe para UserControllerTest
+
     @Autowired
     private lateinit var mockMvc: MockMvc
 
@@ -31,21 +31,30 @@ class UserController(@Autowired private val passwordEncoder: PasswordEncoder) {
     @Autowired
     private lateinit var repository: UserRepository
 
-    @Test
-    fun `deve criar um novo usuario e retornar 200 com ID gerado`() {
-        repository.deleteAll()
+    @Autowired
+    private lateinit var passwordEncoder: PasswordEncoder
 
-        val novoUser = User(
-            nome = "Guilherme",
+    // Limpa o banco antes de cada teste para evitar conflitos de email
+    @BeforeEach
+    fun setup() {
+        repository.deleteAll()
+    }
+
+    @Test
+    @WithMockUser // MUDANÇA: Simulando usuário logado
+    fun `deve criar um novo usuario e retornar 200 com ID gerado`() {
+        // MUDANÇA: Agora usamos o DTO (UserRequest) em vez da Entidade
+        val novoUserRequest = UserRequest(
+            username = "Guilherme",
             email = "email@fake.com.br",
-            password = passwordEncoder.encode("123456"),
-            dataEntrada = LocalDateTime.now()
+            password = "senha-segura" // O Controller vai criptografar isso
         )
-        val jsonEnvio = objectMapper.writeValueAsString(novoUser)
+        val jsonEnvio = objectMapper.writeValueAsString(novoUserRequest)
 
         mockMvc.perform(
             post("/api/users")
-                .contentType(MediaType.APPLICATION_JSON).content(jsonEnvio)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(jsonEnvio)
         )
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.id").exists())
@@ -54,13 +63,12 @@ class UserController(@Autowired private val passwordEncoder: PasswordEncoder) {
     }
 
     @Test
+    @WithMockUser
     fun `deve listar todos os usuarios e retornar 200`() {
-
-        repository.deleteAll()
-
+        // MUDANÇA: Adicionado os campos obrigatórios (email, password, id) para não quebrar o banco
         val users = listOf(
-            User(nome = "Guilherme", dataEntrada = LocalDateTime.now()),
-            User(nome = "Camila", dataEntrada = LocalDateTime.of(2026, 2, 3, 15, 32))
+            User(id = UUID.randomUUID(), nome = "Guilherme", email = "gui@teste.com", password = "123", dataEntrada = LocalDateTime.now()),
+            User(id = UUID.randomUUID(), nome = "Camila", email = "camila@teste.com", password = "123", dataEntrada = LocalDateTime.now())
         )
 
         repository.saveAll(users)
@@ -76,10 +84,9 @@ class UserController(@Autowired private val passwordEncoder: PasswordEncoder) {
     }
 
     @Test
+    @WithMockUser
     fun `deve buscar um novo usuario e retornar 200`() {
-        repository.deleteAll()
-
-        val userNovo = User(nome = "Guilherme", dataEntrada = LocalDateTime.now())
+        val userNovo = User(id = UUID.randomUUID(), nome = "Guilherme", email = "busca@teste.com", password = "123", dataEntrada = LocalDateTime.now())
         val userSalvo = repository.save(userNovo)
         val idGerado = userSalvo.id!!
 
@@ -88,23 +95,24 @@ class UserController(@Autowired private val passwordEncoder: PasswordEncoder) {
                 .contentType(MediaType.APPLICATION_JSON)
         )
             .andExpect(status().isOk)
-            .andExpect {jsonPath("$.id").value(idGerado.toString())}
-            .andExpect{jsonPath("$.nome").value("Guilherme")}
+            .andExpect(jsonPath("$.id").value(idGerado.toString()))
+            .andExpect(jsonPath("$.nome").value("Guilherme"))
     }
 
     @Test
+    @WithMockUser
     fun `deve atualizar um usuario existente e retornar 200`() {
-
-        repository.deleteAll()
-        val userAntigo = User(nome = "nome Antigo", dataEntrada = LocalDateTime.of(2026, 2, 3, 15, 32))
+        val userAntigo = User(id = UUID.randomUUID(), nome = "Nome Antigo", email = "antigo@teste.com", password = "123", dataEntrada = LocalDateTime.now())
         val userSalvo = repository.save(userAntigo)
-        val idGerado = userAntigo.id!!
+        val idGerado = userSalvo.id!!
 
-
-        val dataFixa = LocalDateTime.of(2026, 12, 31, 12, 0, 1)
-        val dadosNovos = User(nome = "Guilherme", dataEntrada = dataFixa)
+        // MUDANÇA: Enviando o UserRequest em vez da entidade completa
+        val dadosNovos = UserRequest(
+            username = "Guilherme",
+            email = "novo@fake.com.br",
+            password = "senha-nova"
+        )
         val jsonEnvio = objectMapper.writeValueAsString(dadosNovos)
-
 
         mockMvc.perform(
             put("/api/users/{id}", idGerado)
@@ -113,39 +121,34 @@ class UserController(@Autowired private val passwordEncoder: PasswordEncoder) {
         )
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.nome").value("Guilherme"))
-            .andExpect(jsonPath("$.dataEntrada").value(dataFixa.toString()))
+            .andExpect(jsonPath("$.email").value("novo@fake.com.br"))
     }
 
     @Test
-    fun `deve eliminar um evento existente e retornar 204 No Content`() {
-        // 1. PREPARAÇÃO
-        repository.deleteAll()
-        val user = User(nome = "user para apagar", dataEntrada = LocalDateTime.of( 2026, 2, 3, 15, 32 ))
+    @WithMockUser
+    fun `deve eliminar um usuario existente e retornar 204 No Content`() {
+        val user = User(id = UUID.randomUUID(), nome = "user para apagar", email = "delete@teste.com", password = "123", dataEntrada = LocalDateTime.now())
         val userSalvo = repository.save(user)
         val idGerado = userSalvo.id!!
 
-        // 2. AÇÃO (DELETE)
         mockMvc.perform(
             delete("/api/users/{id}", idGerado)
         )
-            .andExpect(status().isNoContent) // O status correto para um Delete de sucesso é 204
+            .andExpect(status().isNoContent)
 
-        // 3. VERIFICAÇÃO EXTRA: O banco de dados deve estar vazio agora!
         val aindaExiste = repository.existsById(idGerado)
-        assert(!aindaExiste) // O Kotlin confirma que "aindaExiste" é falso
+        assert(!aindaExiste)
     }
 
     @Test
+    @WithMockUser
     fun `deve retornar erro 404 Not Found ao procurar um ID que nao existe`() {
-        // 1. PREPARAÇÃO: Geramos um UUID aleatório que com certeza não está na base de dados
         val idFalso = UUID.randomUUID()
 
-        // 2. AÇÃO E VERIFICAÇÃO
         mockMvc.perform(
             get("/api/users/{id}", idFalso)
                 .contentType(MediaType.APPLICATION_JSON)
         )
-            .andExpect(status().isNotFound) // Verifica se o Controller caiu no bloco "else" e retornou 404
+            .andExpect(status().isNotFound)
     }
-
 }

@@ -1,10 +1,9 @@
-package com.skydex.api
+package com.skydex.api.controller
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.skydex.api.models.EventoMetereologico
 import com.skydex.api.repositories.EventoRepository
 import org.junit.jupiter.api.Test
-import org.springframework.aot.hint.TypeReference.listOf
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
@@ -133,7 +132,7 @@ class EventoController {
     @Test
     fun `deve retornar erro 404 Not Found ao procurar um ID que nao existe`() {
         // 1. PREPARAÇÃO: Geramos um UUID aleatório que com certeza não está na base de dados
-        val idFalso = java.util.UUID.randomUUID()
+        val idFalso = UUID.randomUUID()
 
         // 2. AÇÃO E VERIFICAÇÃO
         mockMvc.perform(

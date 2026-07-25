@@ -19,18 +19,17 @@ repositories {
 }
 
 dependencies {
-	// 1. Spring Web: Para criar os endpoints REST da API
+
 	implementation("org.springframework.boot:spring-boot-starter-web")
 	implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
 	implementation("org.jetbrains.kotlin:kotlin-reflect")
 
-	// 2. Spring Data JPA: Para a comunicação com o banco de dados
+	implementation("org.springframework.boot:spring-boot-starter-security")
+
 	implementation("org.springframework.boot:spring-boot-starter-data-jpa")
 
-	// 3. PostgreSQL Driver: Para conectar ao banco
 	runtimeOnly("org.postgresql:postgresql")
 
-	// 4. Hibernate Spatial: Essencial para entender os tipos geográficos (Point) do PostGIS
 	implementation("org.hibernate.orm:hibernate-spatial")
 
 	testImplementation("org.springframework.boot:spring-boot-starter-test")

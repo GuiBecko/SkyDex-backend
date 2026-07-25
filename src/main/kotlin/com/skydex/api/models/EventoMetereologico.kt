@@ -22,5 +22,8 @@ class EventoMetereologico(
     var urlFoto: String? = "",
 
     @Column(nullable = false)
-    var dataHoraRegistro: LocalDateTime = LocalDateTime.now()
+    var dataHoraRegistro: LocalDateTime = LocalDateTime.now(),
+
+    @Column(nullable = false)
+    var user_id: UUID? = null
 )

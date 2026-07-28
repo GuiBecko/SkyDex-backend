@@ -58,18 +58,15 @@ class UserController(
     }
 
     @PutMapping("/{id}")
-    fun updateUser(@PathVariable id: UUID, @RequestBody user: UserRequest): ResponseEntity<User> {
-        var userBusca = repo.findById(id)
+    fun updateUser(@PathVariable id: UUID, @Valid @RequestBody user: UserRequest): ResponseEntity<User> {
+        val userBusca = repo.findById(id)
 
         if (userBusca.isPresent) {
             val userOriginal = userBusca.get()
-
             userOriginal.nome = user.username
             userOriginal.email = user.email
-            userOriginal.password = passwordEncoder.encode(user.password)
-
-            val userSalvo = repo.save(userOriginal)
-            return ResponseEntity.ok(userSalvo)
+            userOriginal.definirSenha(passwordEncoder.encode(user.password))
+            return ResponseEntity.ok(repo.save(userOriginal))
         } else {
             return ResponseEntity.notFound().build()
         }

@@ -12,6 +12,8 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.http.MediaType
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
+import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.security.test.context.support.WithMockUser
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*
@@ -54,10 +56,12 @@ class EventoControllerTest {
         )
         userRepository.save(user)
         usuarioTesteId = user.id!!
+
+        val auth = UsernamePasswordAuthenticationToken(user, null, user.authorities ?: emptyList())
+        SecurityContextHolder.getContext().authentication = auth
     }
 
     @Test
-    @WithMockUser(username = "teste@skydex.com")
     fun `deve registrar um novo evento e retornar 200 com ID gerado`() {
 
         val novoEventoRequest = EventoRequest(
@@ -80,7 +84,6 @@ class EventoControllerTest {
     }
 
     @Test
-    @WithMockUser
     fun `deve listar todos os eventos e retornar 200`() {
         val eventos = listOf(
             EventoMetereologico(
@@ -106,7 +109,6 @@ class EventoControllerTest {
     }
 
     @Test
-    @WithMockUser
     fun `deve buscar um novo evento e retornar 200`() {
         val eventoNovo = EventoMetereologico(
             id = UUID.randomUUID(), titulo = "Aurora Boreal", descricao = "luzes", urlFoto = "http://foto1.jpg",
@@ -125,7 +127,6 @@ class EventoControllerTest {
     }
 
     @Test
-    @WithMockUser
     fun `deve atualizar um evento existente e retornar 200`() {
         val eventoAntigo = EventoMetereologico(
             id = UUID.randomUUID(), titulo = "Titulo Antigo", descricao = "Descricao Antiga", urlFoto = "url1.jpg",
@@ -153,7 +154,6 @@ class EventoControllerTest {
     }
 
     @Test
-    @WithMockUser
     fun `deve eliminar um evento existente e retornar 204 No Content`() {
         val evento = EventoMetereologico(
             id = UUID.randomUUID(), titulo = "Evento para apagar", descricao = "...", urlFoto = "url.jpg",
@@ -172,7 +172,6 @@ class EventoControllerTest {
     }
 
     @Test
-    @WithMockUser
     fun `deve retornar erro 404 Not Found ao procurar um ID que nao existe`() {
         val idFalso = UUID.randomUUID()
 

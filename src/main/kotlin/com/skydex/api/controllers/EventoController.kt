@@ -1,6 +1,7 @@
 package com.skydex.api.controllers
 
 import com.skydex.api.models.EventoMetereologico
+import com.skydex.api.models.User
 import com.skydex.api.repositories.EventoRepository
 import com.skydex.api.repositories.UserRepository
 import jakarta.validation.Valid
@@ -30,8 +31,8 @@ class EventoController(private val repo: EventoRepository, private val userRepos
 
     @PostMapping
     fun RegistrarEvento(@Valid @RequestBody evento: EventoRequest): ResponseEntity<out Any?> {
-        val emailDoUsuarioLogado = SecurityContextHolder.getContext().authentication.name
-        val usuario = userRepository.findByEmail(emailDoUsuarioLogado)
+        val usuarioLogado = SecurityContextHolder.getContext().authentication.principal as User
+        val usuario = userRepository.findByEmail(usuarioLogado.email!!)
 
         if(usuario == null) {
             return ResponseEntity.status(401).body(mapOf("error" to "Usuário não encontrado ou token inválido"))

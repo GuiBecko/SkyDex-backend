@@ -10,10 +10,10 @@ import java.time.LocalDateTime
 import java.time.ZoneOffset
 
 @Service
-class TokenService {
-
-    // Em produção, isso viria de uma variável de ambiente (.env)
-    private val secret = "skydex-super-secret-key-2026"
+class TokenService (
+    @Value("\${TOKEN_JWT_SECRET}")
+    private val secret: String
+) {
 
     fun generateToken(user: User): String {
         val algorithm = Algorithm.HMAC256(secret)

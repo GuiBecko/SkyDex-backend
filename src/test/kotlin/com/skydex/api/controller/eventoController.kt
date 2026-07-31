@@ -14,7 +14,6 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.http.MediaType
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
 import org.springframework.security.core.context.SecurityContextHolder
-import org.springframework.security.test.context.support.WithMockUser
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.*
@@ -67,7 +66,8 @@ class EventoControllerTest {
         val novoEventoRequest = EventoRequest(
             titulo = "Aurora Boreal",
             descricao = "Luzes verdes brilhantes no céu noturno.",
-            urlFoto = "https://link-da-foto.com/aurora.jpg"
+            urlFoto = "https://link-da-foto.com/aurora.jpg",
+            userId = usuarioTesteId
         )
 
         val jsonEnvio = objectMapper.writeValueAsString(novoEventoRequest)
@@ -80,7 +80,7 @@ class EventoControllerTest {
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.id").exists())
             .andExpect(jsonPath("$.titulo").value("Aurora Boreal"))
-            .andExpect(jsonPath("$.user_id").value(usuarioTesteId.toString()))
+            .andExpect(jsonPath("$.userId").value(usuarioTesteId.toString()))
     }
 
     @Test
@@ -88,11 +88,11 @@ class EventoControllerTest {
         val eventos = listOf(
             EventoMetereologico(
                 id = UUID.randomUUID(), titulo = "Aurora Boreal", descricao = "luzes", urlFoto = "http://foto1.jpg",
-                dataHoraRegistro = LocalDateTime.now(), user_id = usuarioTesteId
+                dataHoraRegistro = LocalDateTime.now(), userId = usuarioTesteId
             ),
             EventoMetereologico(
                 id = UUID.randomUUID(), titulo = "Eclipse", descricao = "eclipse lunar", urlFoto = "http://foto2.jpg",
-                dataHoraRegistro = LocalDateTime.now(), user_id = usuarioTesteId
+                dataHoraRegistro = LocalDateTime.now(), userId = usuarioTesteId
             )
         )
 
@@ -112,7 +112,7 @@ class EventoControllerTest {
     fun `deve buscar um novo evento e retornar 200`() {
         val eventoNovo = EventoMetereologico(
             id = UUID.randomUUID(), titulo = "Aurora Boreal", descricao = "luzes", urlFoto = "http://foto1.jpg",
-            dataHoraRegistro = LocalDateTime.now(), user_id = usuarioTesteId
+            dataHoraRegistro = LocalDateTime.now(), userId = usuarioTesteId
         )
         val eventoSalvo = repository.save(eventoNovo)
         val idGerado = eventoSalvo.id!!
@@ -130,7 +130,7 @@ class EventoControllerTest {
     fun `deve atualizar um evento existente e retornar 200`() {
         val eventoAntigo = EventoMetereologico(
             id = UUID.randomUUID(), titulo = "Titulo Antigo", descricao = "Descricao Antiga", urlFoto = "url1.jpg",
-            dataHoraRegistro = LocalDateTime.now(), user_id = usuarioTesteId
+            dataHoraRegistro = LocalDateTime.now(), userId = usuarioTesteId
         )
         val eventoSalvo = repository.save(eventoAntigo)
         val idGerado = eventoSalvo.id!!
@@ -139,7 +139,8 @@ class EventoControllerTest {
         val dadosNovos = EventoRequest(
             titulo = "Tornado Confirmado",
             descricao = "Tornado tocou o solo",
-            urlFoto = "url2.jpg"
+            urlFoto = "url2.jpg",
+            userId = usuarioTesteId
         )
         val jsonEnvio = objectMapper.writeValueAsString(dadosNovos)
 
@@ -157,7 +158,7 @@ class EventoControllerTest {
     fun `deve eliminar um evento existente e retornar 204 No Content`() {
         val evento = EventoMetereologico(
             id = UUID.randomUUID(), titulo = "Evento para apagar", descricao = "...", urlFoto = "url.jpg",
-            dataHoraRegistro = LocalDateTime.now(), user_id = usuarioTesteId
+            dataHoraRegistro = LocalDateTime.now(), userId = usuarioTesteId
         )
         val eventoSalvo = repository.save(evento)
         val idGerado = eventoSalvo.id!!

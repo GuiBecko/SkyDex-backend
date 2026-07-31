@@ -24,6 +24,6 @@ class EventoMetereologico(
     @Column(nullable = false)
     var dataHoraRegistro: LocalDateTime = LocalDateTime.now(),
 
-    @Column(nullable = false)
-    var user_id: UUID? = null
+    @Column(name = "user_id", nullable = false)
+    val userId: UUID
 )

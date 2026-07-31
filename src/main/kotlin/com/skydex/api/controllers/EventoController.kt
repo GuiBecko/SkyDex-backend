@@ -9,7 +9,6 @@ import jakarta.validation.constraints.NotBlank
 import org.springframework.http.ResponseEntity
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.web.bind.annotation.*
-import java.time.LocalDateTime
 import java.util.UUID
 import kotlin.collections.mapOf
 
@@ -43,8 +42,7 @@ class EventoController(private val repo: EventoRepository, private val userRepos
             titulo = evento.titulo,
             descricao = evento.descricao,
             urlFoto = evento.urlFoto,
-            dataHoraRegistro = LocalDateTime.now(),
-            user_id = usuario.id
+            userId = usuario.id!!,
         )
         val eventoSalvo = repo.save(eventoNovo)
 

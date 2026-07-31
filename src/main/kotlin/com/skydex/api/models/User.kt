@@ -32,7 +32,6 @@ class User(
 
     override fun getPassword(): String? = this.password
 
-    // O Spring Security usa o campo 'username' para autenticar. No seu app, é o email!
     override fun getUsername(): String? = this.email
 
     override fun isAccountNonExpired(): Boolean = true

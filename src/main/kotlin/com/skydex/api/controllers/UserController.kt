@@ -1,6 +1,8 @@
 package com.skydex.api.controllers
 
+import com.skydex.api.models.EventoMetereologico
 import com.skydex.api.models.User
+import com.skydex.api.repositories.EventoRepository
 import com.skydex.api.repositories.UserRepository
 import jakarta.validation.Valid
 import jakarta.validation.constraints.Email
@@ -26,6 +28,7 @@ data class UserRequest(
 @RequestMapping("/api/users")
 class UserController(
     private val repo: UserRepository,
+    private val eventRepo: EventoRepository,
     private val passwordEncoder: PasswordEncoder
 ) {
     @PostMapping
@@ -88,5 +91,22 @@ class UserController(
         } else {
             ResponseEntity.notFound().build()
         }
+    }
+
+    @GetMapping("/{id}/eventos")
+    fun listUserEvents(@PathVariable id: UUID): ResponseEntity<Any>{
+        val userBusca = repo.findById(id)
+        if (userBusca.isEmpty) {
+            return ResponseEntity.status(404).body(mapOf("error" to "Usuário não encontrado"))
+        }
+
+        var userEvents: List<EventoMetereologico>  = eventRepo.findByUserId(id)
+
+        if (userEvents.isEmpty()) {
+            return ResponseEntity.status(404).body(mapOf("error" to "Usuário nao tem Eventos"))
+        }
+
+        return ResponseEntity.status(200).body(userEvents)
+
     }
 }

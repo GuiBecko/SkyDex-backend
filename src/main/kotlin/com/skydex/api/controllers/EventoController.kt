@@ -20,7 +20,10 @@ data class EventoRequest (
     var descricao: String,
 
     @field:NotBlank(message = "Url da foto nao deve ser vazio.")
-    var urlFoto: String
+    var urlFoto: String,
+
+    @field:NotBlank(message = "Evento deve estar relacionado a um usuário")
+    var userId : UUID? = null,
 )
 
 

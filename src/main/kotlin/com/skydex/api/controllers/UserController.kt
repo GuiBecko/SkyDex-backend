@@ -4,6 +4,7 @@ import com.skydex.api.models.EventoMetereologico
 import com.skydex.api.models.User
 import com.skydex.api.repositories.EventoRepository
 import com.skydex.api.repositories.UserRepository
+import com.skydex.api.services.OpenMeteoService
 import jakarta.validation.Valid
 import jakarta.validation.constraints.Email
 import jakarta.validation.constraints.NotBlank
@@ -21,12 +22,13 @@ data class UserRequest(
     val email: String,
 
     @field:NotBlank(message = "Senha nao deve ser nulo")
-    val password: String,
+    val password: String
 )
 
 @RestController
 @RequestMapping("/api/users")
 class UserController(
+    private val openMeteoService: OpenMeteoService,
     private val repo: UserRepository,
     private val eventRepo: EventoRepository,
     private val passwordEncoder: PasswordEncoder
@@ -109,4 +111,19 @@ class UserController(
         return ResponseEntity.status(200).body(userEvents)
 
     }
+
+    @GetMapping("{id}/eventosProximos")
+    fun listNearEvents(
+        @PathVariable id: UUID,
+        @RequestParam lat: Double,
+        @RequestParam lon: Double,
+    ): ResponseEntity<Any>{
+        val climaNaRegiao = openMeteoService.buscarEventosProximos(lat, lon)
+        return if (climaNaRegiao != null) {
+            ResponseEntity.ok(climaNaRegiao)
+        }else{
+            ResponseEntity.status(500).body(mapOf("error" to "Falha ao buscar dados metereológicos"))
+        }
+    }
+
 }

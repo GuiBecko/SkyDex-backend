@@ -2,15 +2,21 @@ package com.skydex.api.controller
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.skydex.api.controllers.UserRequest // Confirme se o import do seu DTO está correto
+import com.skydex.api.dto.EventoProximo
+import com.skydex.api.dto.HourlyData
+import com.skydex.api.dto.OpenMeteoResponse
 import com.skydex.api.models.EventoMetereologico
 import com.skydex.api.models.User
 import com.skydex.api.repositories.EventoRepository
 import com.skydex.api.repositories.UserRepository
+import com.skydex.api.services.OpenMeteoService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito.`when`
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.http.MediaType
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.test.context.support.WithMockUser
@@ -19,10 +25,12 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.*
 import java.time.LocalDateTime
 import java.util.UUID
+import kotlin.Double
+import kotlin.String
 
 @SpringBootTest
 @AutoConfigureMockMvc
-class UserControllerTest { // MUDANÇA: Corrigido o nome da classe para UserControllerTest
+class UserControllerTest {
 
     @Autowired
     private lateinit var mockMvc: MockMvc
@@ -38,6 +46,9 @@ class UserControllerTest { // MUDANÇA: Corrigido o nome da classe para UserCont
 
     @Autowired
     private lateinit var passwordEncoder: PasswordEncoder
+
+    @MockBean
+    private lateinit var openMeteoService: OpenMeteoService
 
     private lateinit var usuarioTesteId: UUID
     private val emailTeste = "skydex@gmail.com"
@@ -207,5 +218,59 @@ class UserControllerTest { // MUDANÇA: Corrigido o nome da classe para UserCont
             .andExpect(jsonPath("$.length()").value(2))
             .andExpect(jsonPath("$[0].titulo").value("Chuva Forte"))
             .andExpect(jsonPath("$[1].titulo").value("Granizo"))
+    }
+
+    // NEAR EVENTS
+
+    @Test
+    @WithMockUser(username = "skydex@gmail.com")
+    fun `deve buscar eventos proximos e retornar 200 com os dados do clima`() {
+        val latTeste = 25.1
+        val lngTeste = 25.2
+
+        val eventosFalsos = listOf(
+            EventoProximo(
+                fenomeno = "Neve",
+                horario = "2026-08-01T12:00:00",
+                temperatura = 10.0,
+                nivelAlerta = "Interessante"
+            )
+        )
+
+
+        `when`(openMeteoService.buscarEventosProximos(latTeste, lngTeste)).thenReturn(eventosFalsos)
+
+        // 2. Act & Assert (Ação e Verificação)
+        mockMvc.perform(
+            get("/api/users/{id}/eventosProximos", usuarioTesteId)
+                .param("lat", latTeste.toString())
+                .param("lon", lngTeste.toString())
+                .contentType(MediaType.APPLICATION_JSON)
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$[0].fenomeno").value("Neve"))
+            .andExpect(jsonPath("$[0].nivelAlerta").value("Interessante"))
+            .andExpect(jsonPath("$[0].temperatura").value(10.0))
+    }
+
+    @Test
+    @WithMockUser(username = "skydex@gmail.com")
+    fun `deve retornar erro 500 caso a API externa do OpenMeteo falhe`() {
+        // 1. Arrange
+        val latTeste = -23.55
+        val lngTeste = -46.63
+
+        // Simulamos o serviço externo retornando nulo (falha)
+        `when`(openMeteoService.buscarEventosProximos(latTeste, lngTeste)).thenReturn(null)
+
+        // 2. Act & Assert
+        mockMvc.perform(
+            get("/api/users/{id}/eventosProximos", usuarioTesteId)
+                .param("lat", latTeste.toString())
+                .param("lon", lngTeste.toString())
+                .contentType(MediaType.APPLICATION_JSON)
+        )
+            .andExpect(status().isInternalServerError)
+            .andExpect(jsonPath("$.error").exists())
     }
 }

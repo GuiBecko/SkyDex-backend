@@ -8,13 +8,12 @@ import org.springframework.web.client.RestClient
 @Service
 class OpenMeteoService {
 
-    private val restClient = RestClient.create("http://127.0.0.1:8080")
+    private val restClient = RestClient.create("https://api.open-meteo.com")
 
-    fun buscarEventosProximos(lat: Double, lng: Double): List<EventoProximo> {
+    fun buscarEventosProximos(lat: Double, lng: Double): List<EventoProximo?> {
         val resposta = try {
             restClient.get()
-                // MUDANÇA AQUI: Adicionamos o weather_code na URL
-                .uri("/v1/forecast?latitude=$lat&longitude=$lng&models=ecmwf_ifs025&hourly=temperature_2m,weather_code")
+                .uri("/v1/forecast?latitude=$lat&longitude=$lng&hourly=temperature_2m,weather_code")
                 .retrieve()
                 .body(OpenMeteoResponse::class.java)
         } catch (e: Exception) {
@@ -32,8 +31,10 @@ class OpenMeteoService {
             val hora = resposta.hourly.time[i]
             val temp = resposta.hourly.temperature_2m[i]
 
-            // O seu Tradutor de Fenômenos!
+            if(codigo == null || temp == null) continue
+
             when (codigo) {
+                0, 1, 2, 3 -> eventosEncontrados.add(EventoProximo("Céu Limpo / Nublado", hora, temp, "Tranquilo"))
                 45, 48 -> eventosEncontrados.add(EventoProximo("Nevoeiro Intenso", hora, temp, "Interessante"))
                 65 -> eventosEncontrados.add(EventoProximo("Chuva Forte", hora, temp, "Atenção"))
                 71, 73, 75 -> eventosEncontrados.add(EventoProximo("Neve", hora, temp, "Interessante"))

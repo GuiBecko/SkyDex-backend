@@ -11,7 +11,6 @@ data class OpenMeteoResponse (
 
 data class HourlyData(
     val time: List<String>,
-    val temperature_2m: List<Double>,
-    @field:JsonProperty("weather_code")
-    val weather_code: List<Int>
+    val temperature_2m: List<Double?>,
+    val weather_code: List<Int?>
 )

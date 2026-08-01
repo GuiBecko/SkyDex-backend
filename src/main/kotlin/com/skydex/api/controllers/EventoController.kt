@@ -6,6 +6,7 @@ import com.skydex.api.repositories.EventoRepository
 import com.skydex.api.repositories.UserRepository
 import jakarta.validation.Valid
 import jakarta.validation.constraints.NotBlank
+import org.jetbrains.annotations.NotNull
 import org.springframework.http.ResponseEntity
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.web.bind.annotation.*
@@ -22,7 +23,7 @@ data class EventoRequest (
     @field:NotBlank(message = "Url da foto nao deve ser vazio.")
     var urlFoto: String,
 
-    @field:NotBlank(message = "Evento deve estar relacionado a um usuário")
+    @field:jakarta.validation.constraints.NotNull(message = "Evento deve estar relacionado a um usuário")
     var userId : UUID? = null,
 )
 

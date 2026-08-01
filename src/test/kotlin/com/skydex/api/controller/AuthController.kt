@@ -118,7 +118,7 @@ class AuthControllerTest {
         )
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.mensagem").value("Login realizado com sucesso!"))
-            .andExpect { jsonPath("$.tokenGerado").exists() }
+            .andExpect ( jsonPath("$.tokenGerado").exists())
     }
 
     @Test

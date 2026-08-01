@@ -3,8 +3,6 @@ package com.skydex.api.controller
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.skydex.api.controllers.UserRequest // Confirme se o import do seu DTO está correto
 import com.skydex.api.dto.EventoProximo
-import com.skydex.api.dto.HourlyData
-import com.skydex.api.dto.OpenMeteoResponse
 import com.skydex.api.models.EventoMetereologico
 import com.skydex.api.models.User
 import com.skydex.api.repositories.EventoRepository
@@ -25,8 +23,6 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.*
 import java.time.LocalDateTime
 import java.util.UUID
-import kotlin.Double
-import kotlin.String
 
 @SpringBootTest
 @AutoConfigureMockMvc

@@ -60,7 +60,8 @@ class AuthController(
                 val tokenGerado = tokenService.generateToken(userBusca)
                 return ResponseEntity.ok().body(mapOf(
                     "mensagem" to "Login realizado com sucesso!",
-                    "tokenGerado" to tokenGerado))
+                    "tokenGerado" to tokenGerado,
+                    "userId" to userBusca.id.toString()))
             }
         }
     }

@@ -65,21 +65,6 @@ class UserControllerTest : IntegrationTestBase() {
     }
 
     @Test
-    fun `lists the authenticated user's events and returns 200`() {
-        val user = persistUser(email = "events-owner@skydex.com")
-        persistEvent(owner = user, title = "Heavy Rain", description = "Storm in the region", photoUrl = "http://photo1.jpg")
-        persistEvent(owner = user, title = "Hail", description = "Small ice stones", photoUrl = "http://photo2.jpg")
-
-        mockMvc.perform(
-            get("/api/users/me/events")
-                .header("Authorization", authHeaderFor(user))
-                .contentType(MediaType.APPLICATION_JSON)
-        )
-            .andExpect(status().isOk)
-            .andExpect(jsonPath("$.length()").value(2))
-    }
-
-    @Test
     fun `user responses never expose the password hash`() {
         val user = persistUser(name = "Leak Check", email = "leak@skydex.com", password = "plain-text-secret")
 

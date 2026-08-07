@@ -2,7 +2,6 @@ package com.skydex.api.controllers
 
 import com.skydex.api.dto.UpdateProfileRequest
 import com.skydex.api.dto.UserResponse
-import com.skydex.api.dto.WeatherEventResponse
 import com.skydex.api.errors.ConflictException
 import com.skydex.api.models.User
 import com.skydex.api.repositories.UserRepository
@@ -50,9 +49,4 @@ class UserController(
         users.delete(currentUser)
         return ResponseEntity.noContent().build()
     }
-
-    @GetMapping("/me/events")
-    fun myEvents(@AuthenticationPrincipal currentUser: User): List<WeatherEventResponse> =
-        events.findByUserIdOrderByCapturedAtDesc(currentUser.id!!)
-            .map { WeatherEventResponse.from(it, currentUser) }
 }

@@ -10,6 +10,7 @@ import com.skydex.api.repositories.WeatherEventRepository
 import jakarta.validation.Valid
 import org.springframework.http.ResponseEntity
 import org.springframework.security.core.annotation.AuthenticationPrincipal
+import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PutMapping
@@ -42,9 +43,10 @@ class UserController(
         return UserResponse.from(users.save(currentUser))
     }
 
+    @Transactional
     @DeleteMapping("/me")
     fun deleteMe(@AuthenticationPrincipal currentUser: User): ResponseEntity<Void> {
-        events.findByUserIdOrderByCapturedAtDesc(currentUser.id!!).forEach { events.delete(it) }
+        events.deleteAll(events.findByUserIdOrderByCapturedAtDesc(currentUser.id!!))
         users.delete(currentUser)
         return ResponseEntity.noContent().build()
     }

@@ -49,6 +49,7 @@ class UserControllerTest : IntegrationTestBase() {
     @Test
     fun `deletes the authenticated user and returns 204 No Content`() {
         val user = persistUser(name = "User to delete", email = "delete@test.com")
+        persistEvent(owner = user, title = "Orphan risk", description = "Should go with the user", photoUrl = "http://photo.jpg")
 
         mockMvc.perform(
             delete("/api/users/me")
@@ -58,6 +59,9 @@ class UserControllerTest : IntegrationTestBase() {
 
         val stillExists = userRepository.existsById(user.id!!)
         assert(!stillExists)
+
+        val orphanedEvents = weatherEventRepository.findByUserIdOrderByCapturedAtDesc(user.id!!)
+        assert(orphanedEvents.isEmpty())
     }
 
     @Test

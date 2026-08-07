@@ -58,6 +58,8 @@ class WeatherEventController(
     @GetMapping("/{id}")
     fun getById(@PathVariable id: UUID): WeatherEventResponse {
         val event = events.findById(id).orElseThrow { NotFoundException("Capture not found") }
+        // Author comes from the event, never from the caller: this endpoint has no ownership
+        // restriction, so the two genuinely differ here. The test below pins that.
         val author = users.findById(event.userId).orElseThrow { NotFoundException("Capture not found") }
         return WeatherEventResponse.from(event, author)
     }
@@ -75,6 +77,10 @@ class WeatherEventController(
         event.title = request.title
         event.description = request.description
         event.photoUrl = request.photoUrl
+        // Safe to pass currentUser as the author ONLY because the guard above proves
+        // currentUser.id == event.userId. If that guard is ever relaxed — a moderator edit, a
+        // shared album — this must go back to looking the author up from event.userId, or the
+        // response will attribute the capture to whoever edited it.
         return WeatherEventResponse.from(events.save(event), currentUser)
     }
 

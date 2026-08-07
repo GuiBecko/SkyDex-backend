@@ -102,6 +102,22 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     }
 
     @Test
+    fun `getById reports the event's real author, not the caller`() {
+        val owner = persistUser(name = "Real Owner", email = "real-owner@skydex.com")
+        val caller = persistUser(name = "Curious Caller", email = "curious-caller@skydex.com")
+        val event = persistEvent(owner = owner, title = "Someone else's storm")
+
+        mockMvc.perform(
+            get("/api/events/{id}", event.id!!)
+                .header("Authorization", authHeaderFor(caller))
+                .contentType(MediaType.APPLICATION_JSON)
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.userId").value(owner.id.toString()))
+            .andExpect(jsonPath("$.authorName").value("Real Owner"))
+    }
+
+    @Test
     fun `updates an existing event and returns 200`() {
         val event = persistEvent(owner = testUser, title = "Old Title", description = "Old description", photoUrl = "url1.jpg")
 

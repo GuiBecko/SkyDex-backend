@@ -15,6 +15,7 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import java.time.Instant
 import java.util.UUID
 
 class WeatherEventControllerTest : IntegrationTestBase() {
@@ -50,9 +51,26 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     }
 
     @Test
-    fun `lists the current user's events and returns 200`() {
-        persistEvent(owner = testUser, title = "Aurora Borealis", description = "lights", photoUrl = "http://photo1.jpg")
-        persistEvent(owner = testUser, title = "Eclipse", description = "lunar eclipse", photoUrl = "http://photo2.jpg")
+    fun `lists only the current user's events, most recent first`() {
+        val now = Instant.now()
+        persistEvent(
+            owner = testUser,
+            title = "Aurora Borealis",
+            description = "lights",
+            photoUrl = "http://photo1.jpg",
+            capturedAt = now.minusSeconds(3600)
+        )
+        persistEvent(
+            owner = testUser,
+            title = "Eclipse",
+            description = "lunar eclipse",
+            photoUrl = "http://photo2.jpg",
+            capturedAt = now
+        )
+
+        // Another user's event must never leak into this user's "mine" listing.
+        val otherUser = persistUser(name = "Other Pilot", email = "other@skydex.com")
+        persistEvent(owner = otherUser, title = "Hail", description = "not mine", photoUrl = "http://other.jpg")
 
         mockMvc.perform(
             get("/api/events/mine")
@@ -61,6 +79,10 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         )
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.length()").value(2))
+            .andExpect(jsonPath("$[0].title").value("Eclipse"))
+            .andExpect(jsonPath("$[0].authorName").value("Test Pilot"))
+            .andExpect(jsonPath("$[1].title").value("Aurora Borealis"))
+            .andExpect(jsonPath("$[1].authorName").value("Test Pilot"))
     }
 
     @Test
@@ -96,6 +118,28 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.title").value("Tornado Confirmed"))
             .andExpect(jsonPath("$.photoUrl").value("url2.jpg"))
+    }
+
+    @Test
+    fun `update reports the event's real author, not the caller`() {
+        val event = persistEvent(owner = testUser, title = "Old Title", description = "Old description", photoUrl = "url1.jpg")
+        val caller = persistUser(name = "Caller Pilot", email = "caller@skydex.com")
+
+        val request = CreateWeatherEventRequest(
+            title = "Tornado Confirmed",
+            description = "Tornado touched the ground",
+            photoUrl = "url2.jpg"
+        )
+
+        mockMvc.perform(
+            put("/api/events/{id}", event.id!!)
+                .header("Authorization", authHeaderFor(caller))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.userId").value(testUser.id.toString()))
+            .andExpect(jsonPath("$.authorName").value("Test Pilot"))
     }
 
     @Test

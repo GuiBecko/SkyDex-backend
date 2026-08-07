@@ -8,16 +8,25 @@ import com.skydex.api.support.authHeaderFor
 import com.skydex.api.support.persistUser
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.`when`
-import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneOffset
+import java.time.temporal.ChronoUnit
 
 class WeatherControllerTest : IntegrationTestBase() {
 
     @MockBean
     private lateinit var openMeteoClient: OpenMeteoClient
+
+    /** Formats an hourly slot the way Open-Meteo does: no offset, truncated to the hour, UTC. */
+    private fun slotAt(hoursFromNow: Long): String =
+        LocalDateTime.ofInstant(Instant.now().plus(hoursFromNow, ChronoUnit.HOURS), ZoneOffset.UTC)
+            .withMinute(0).withSecond(0).withNano(0)
+            .toString()
 
     @Test
     fun `maps a thunderstorm weather code to a danger-level phenomenon`() {
@@ -27,7 +36,7 @@ class WeatherControllerTest : IntegrationTestBase() {
                 latitude = -23.55,
                 longitude = -46.63,
                 hourly = HourlyData(
-                    time = listOf("2026-08-07T12:00"),
+                    time = listOf(slotAt(1)),
                     temperatureCelsius = listOf(21.5),
                     weatherCode = listOf(95)
                 )
@@ -59,5 +68,35 @@ class WeatherControllerTest : IntegrationTestBase() {
         )
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.length()").value(0))
+    }
+
+    @Test
+    fun `never reports a slot that has already elapsed`() {
+        val user = persistUser(email = "past-day@skydex.com")
+        // OpenMeteoClient requests past_days=1, so the real API prepends yesterday's 24 hours.
+        // A slot in the past must be filtered out even though it is earlier in the array
+        // than the future slot.
+        `when`(openMeteoClient.fetchHourlyForecast(10.0, 20.0)).thenReturn(
+            OpenMeteoResponse(
+                latitude = 10.0,
+                longitude = 20.0,
+                hourly = HourlyData(
+                    time = listOf(slotAt(-2), slotAt(3)),
+                    temperatureCelsius = listOf(18.0, 19.0),
+                    weatherCode = listOf(95, 61)
+                )
+            )
+        )
+
+        mockMvc.perform(
+            get("/api/weather/nearby")
+                .param("lat", "10.0")
+                .param("lon", "20.0")
+                .header("Authorization", authHeaderFor(user))
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.length()").value(1))
+            .andExpect(jsonPath("$[0].phenomenon").value("Chuva"))
+            .andExpect(jsonPath("$[0].temperatureCelsius").value(19.0))
     }
 }

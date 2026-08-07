@@ -7,6 +7,10 @@ import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneOffset
+import java.time.format.DateTimeParseException
 
 @RestController
 @RequestMapping("/api/weather")
@@ -17,12 +21,19 @@ class WeatherController(private val openMeteoClient: OpenMeteoClient) {
         @RequestParam lat: Double,
         @RequestParam lon: Double
     ): ResponseEntity<List<NearbyPhenomenonResponse>> {
-        val forecast = openMeteoClient.fetchHourlyForecast(lat, lon)
-        val hourly = forecast?.hourly ?: return ResponseEntity.ok(emptyList())
+        val hourly = openMeteoClient.fetchHourlyForecast(lat, lon)?.hourly
+            ?: return ResponseEntity.ok(emptyList())
 
+        // OpenMeteoClient asks for past_days=1, so these arrays BEGIN YESTERDAY at 00:00 UTC
+        // and run 72 slots. Select by timestamp, never by array index: an index window here
+        // would make an endpoint named "nearby" report the past.
+        val now = Instant.now()
         val results = mutableListOf<NearbyPhenomenonResponse>()
-        val slots = minOf(24, hourly.time.size, hourly.weatherCode.size, hourly.temperatureCelsius.size)
+        val slots = minOf(hourly.time.size, hourly.weatherCode.size, hourly.temperatureCelsius.size)
         for (i in 0 until slots) {
+            if (results.size >= FORECAST_HOURS) break
+            val slotTime = parseUtcSlot(hourly.time[i]) ?: continue
+            if (slotTime.isBefore(now)) continue
             val code = hourly.weatherCode[i] ?: continue
             val alertLevel = when (code) {
                 45, 48 -> "Interessante"
@@ -54,5 +65,16 @@ class WeatherController(private val openMeteoClient: OpenMeteoClient) {
             )
         }
         return ResponseEntity.ok(results)
+    }
+
+    /** Open-Meteo returns "2026-08-07T14:00" with no offset; the client requested timezone=UTC. */
+    private fun parseUtcSlot(raw: String): Instant? = try {
+        LocalDateTime.parse(raw).toInstant(ZoneOffset.UTC)
+    } catch (e: DateTimeParseException) {
+        null
+    }
+
+    private companion object {
+        const val FORECAST_HOURS = 24
     }
 }

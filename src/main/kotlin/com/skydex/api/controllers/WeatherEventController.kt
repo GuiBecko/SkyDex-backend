@@ -62,15 +62,15 @@ class WeatherEventController(
 
     @PutMapping("/{id}")
     fun update(
-        @AuthenticationPrincipal currentUser: User,
         @PathVariable id: UUID,
         @Valid @RequestBody request: CreateWeatherEventRequest
     ): ResponseEntity<WeatherEventResponse> {
         val event = events.findById(id).orElse(null) ?: return ResponseEntity.notFound().build()
+        val author = users.findById(event.userId).orElse(null) ?: return ResponseEntity.notFound().build()
         event.title = request.title
         event.description = request.description
         event.photoUrl = request.photoUrl
-        return ResponseEntity.ok(WeatherEventResponse.from(events.save(event), currentUser))
+        return ResponseEntity.ok(WeatherEventResponse.from(events.save(event), author))
     }
 
     @DeleteMapping("/{id}")

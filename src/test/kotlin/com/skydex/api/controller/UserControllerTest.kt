@@ -1,47 +1,23 @@
 package com.skydex.api.controller
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.skydex.api.controllers.UserRequest // Confirme se o import do seu DTO está correto
 import com.skydex.api.dto.EventoProximo
 import com.skydex.api.models.EventoMetereologico
 import com.skydex.api.models.User
-import com.skydex.api.repositories.EventoRepository
-import com.skydex.api.repositories.UserRepository
 import com.skydex.api.services.OpenMeteoService
+import com.skydex.api.support.IntegrationTestBase
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.`when`
-import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
-import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.http.MediaType
-import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.test.context.support.WithMockUser
-import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.*
 import java.time.LocalDateTime
 import java.util.UUID
 
-@SpringBootTest
-@AutoConfigureMockMvc
-class UserControllerTest {
-
-    @Autowired
-    private lateinit var mockMvc: MockMvc
-
-    @Autowired
-    private lateinit var objectMapper: ObjectMapper
-
-    @Autowired
-    private lateinit var repository: UserRepository
-
-    @Autowired
-    private lateinit var eventoRepository: EventoRepository
-
-    @Autowired
-    private lateinit var passwordEncoder: PasswordEncoder
+class UserControllerTest : IntegrationTestBase() {
 
     @MockBean
     private lateinit var openMeteoService: OpenMeteoService
@@ -49,10 +25,9 @@ class UserControllerTest {
     private lateinit var usuarioTesteId: UUID
     private val emailTeste = "skydex@gmail.com"
 
-    // Limpa o banco antes de cada teste para evitar conflitos de email
+    // Cria o usuário de fixture usado pelos testes
     @BeforeEach
-    fun setup() {
-        repository.deleteAll()
+    fun setUpFixtures() {
         val user = User(
             id = UUID.randomUUID(),
             nome = "Piloto de Testes",
@@ -62,7 +37,7 @@ class UserControllerTest {
         )
 
         // CAPTURE O RETORNO DO SAVE: O Hibernate define o ID oficial aqui
-        val userSalvo = repository.save(user)
+        val userSalvo = userRepository.save(user)
         usuarioTesteId = userSalvo.id!!
     }
 
@@ -91,14 +66,14 @@ class UserControllerTest {
     @Test
     @WithMockUser
     fun `deve listar todos os usuarios e retornar 200`() {
-        repository.deleteAll()
+        userRepository.deleteAll()
 
         val users = listOf(
             User(id = UUID.randomUUID(), nome = "Guilherme", email = "gui@teste.com", password = "123", dataEntrada = LocalDateTime.now()),
             User(id = UUID.randomUUID(), nome = "Camila", email = "camila@teste.com", password = "123", dataEntrada = LocalDateTime.now())
         )
 
-        repository.saveAll(users)
+        userRepository.saveAll(users)
 
         mockMvc.perform(
             get("/api/users")
@@ -114,7 +89,7 @@ class UserControllerTest {
     @WithMockUser
     fun `deve buscar um novo usuario e retornar 200`() {
         val userNovo = User(id = UUID.randomUUID(), nome = "Guilherme", email = "busca@teste.com", password = "123", dataEntrada = LocalDateTime.now())
-        val userSalvo = repository.save(userNovo)
+        val userSalvo = userRepository.save(userNovo)
         val idGerado = userSalvo.id!!
 
         mockMvc.perform(
@@ -130,7 +105,7 @@ class UserControllerTest {
     @WithMockUser
     fun `deve atualizar um usuario existente e retornar 200`() {
         val userAntigo = User(id = UUID.randomUUID(), nome = "Nome Antigo", email = "antigo@teste.com", password = "123", dataEntrada = LocalDateTime.now())
-        val userSalvo = repository.save(userAntigo)
+        val userSalvo = userRepository.save(userAntigo)
         val idGerado = userSalvo.id!!
 
         // MUDANÇA: Enviando o UserRequest em vez da entidade completa
@@ -155,7 +130,7 @@ class UserControllerTest {
     @WithMockUser
     fun `deve eliminar um usuario existente e retornar 204 No Content`() {
         val user = User(id = UUID.randomUUID(), nome = "user para apagar", email = "delete@teste.com", password = "123", dataEntrada = LocalDateTime.now())
-        val userSalvo = repository.save(user)
+        val userSalvo = userRepository.save(user)
         val idGerado = userSalvo.id!!
 
         mockMvc.perform(
@@ -163,7 +138,7 @@ class UserControllerTest {
         )
             .andExpect(status().isNoContent)
 
-        val aindaExiste = repository.existsById(idGerado)
+        val aindaExiste = userRepository.existsById(idGerado)
         assert(!aindaExiste)
     }
 

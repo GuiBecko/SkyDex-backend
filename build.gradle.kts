@@ -14,6 +14,13 @@ java {
 	sourceCompatibility = JavaVersion.VERSION_17
 }
 
+// Spring Boot 3.2.4's managed Testcontainers version (1.19.7) ships a Docker client that pins
+// its connectivity probe to Docker Engine API 1.32. Docker Engine installs newer than that
+// reject requests below their configured minimum API version, so 1.19.7 cannot start any
+// container on such hosts. This overrides only the Testcontainers BOM entry (not Spring Boot,
+// not Kotlin) to a version whose client negotiates the API version instead of hardcoding it.
+extra["testcontainers.version"] = "1.21.4"
+
 repositories {
 	mavenCentral()
 }
@@ -38,6 +45,9 @@ dependencies {
 	implementation("org.hibernate.orm:hibernate-spatial")
 
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
+	testImplementation("org.springframework.boot:spring-boot-testcontainers")
+	testImplementation("org.testcontainers:junit-jupiter")
+	testImplementation("org.testcontainers:postgresql")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

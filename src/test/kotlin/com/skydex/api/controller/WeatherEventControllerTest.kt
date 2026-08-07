@@ -1,51 +1,28 @@
 package com.skydex.api.controller
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.skydex.api.controllers.EventoRequest
 import com.skydex.api.models.EventoMetereologico
 import com.skydex.api.models.User
-import com.skydex.api.repositories.EventoRepository
-import com.skydex.api.repositories.UserRepository
+import com.skydex.api.support.IntegrationTestBase
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
-import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.http.MediaType
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
 import org.springframework.security.core.context.SecurityContextHolder
-import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.*
 import java.time.LocalDateTime
 import java.util.UUID
 
-@SpringBootTest
-@AutoConfigureMockMvc
-class EventoControllerTest {
-
-    @Autowired
-    private lateinit var mockMvc: MockMvc
-
-    @Autowired
-    private lateinit var objectMapper: ObjectMapper
-
-    @Autowired
-    private lateinit var repository: EventoRepository
-
-    @Autowired
-    private lateinit var userRepository: UserRepository
+class WeatherEventControllerTest : IntegrationTestBase() {
 
     private lateinit var usuarioTesteId: UUID
     private val emailTeste = "teste@skydex.com"
 
 
-    // Antes de cada teste, limpamos o banco e criamos um usuário para associar aos eventos
+    // Antes de cada teste, criamos um usuário para associar aos eventos
     @BeforeEach
-    fun setup() {
-        repository.deleteAll()
-        userRepository.deleteAll()
-
+    fun setUpFixtures() {
         val user = User(
             id = null, //banco gera no .save()
             nome = "Piloto de Testes",
@@ -96,7 +73,7 @@ class EventoControllerTest {
             )
         )
 
-        repository.saveAll(eventos)
+        eventoRepository.saveAll(eventos)
 
         mockMvc.perform(
             get("/api/eventos")
@@ -114,7 +91,7 @@ class EventoControllerTest {
             id = UUID.randomUUID(), titulo = "Aurora Boreal", descricao = "luzes", urlFoto = "http://foto1.jpg",
             dataHoraRegistro = LocalDateTime.now(), userId = usuarioTesteId
         )
-        val eventoSalvo = repository.save(eventoNovo)
+        val eventoSalvo = eventoRepository.save(eventoNovo)
         val idGerado = eventoSalvo.id!!
 
         mockMvc.perform(
@@ -132,7 +109,7 @@ class EventoControllerTest {
             id = UUID.randomUUID(), titulo = "Titulo Antigo", descricao = "Descricao Antiga", urlFoto = "url1.jpg",
             dataHoraRegistro = LocalDateTime.now(), userId = usuarioTesteId
         )
-        val eventoSalvo = repository.save(eventoAntigo)
+        val eventoSalvo = eventoRepository.save(eventoAntigo)
         val idGerado = eventoSalvo.id!!
 
         // Enviando DTO (Request) no PUT
@@ -160,7 +137,7 @@ class EventoControllerTest {
             id = UUID.randomUUID(), titulo = "Evento para apagar", descricao = "...", urlFoto = "url.jpg",
             dataHoraRegistro = LocalDateTime.now(), userId = usuarioTesteId
         )
-        val eventoSalvo = repository.save(evento)
+        val eventoSalvo = eventoRepository.save(evento)
         val idGerado = eventoSalvo.id!!
 
         mockMvc.perform(
@@ -168,7 +145,7 @@ class EventoControllerTest {
         )
             .andExpect(status().isNoContent)
 
-        val aindaExiste = repository.existsById(idGerado)
+        val aindaExiste = eventoRepository.existsById(idGerado)
         assert(!aindaExiste)
     }
 

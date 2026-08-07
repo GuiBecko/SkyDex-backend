@@ -6,6 +6,8 @@ import com.skydex.api.support.IntegrationTestBase
 import com.skydex.api.support.authHeaderFor
 import com.skydex.api.support.persistEvent
 import com.skydex.api.support.persistUser
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.http.MediaType
@@ -121,28 +123,6 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     }
 
     @Test
-    fun `update reports the event's real author, not the caller`() {
-        val event = persistEvent(owner = testUser, title = "Old Title", description = "Old description", photoUrl = "url1.jpg")
-        val caller = persistUser(name = "Caller Pilot", email = "caller@skydex.com")
-
-        val request = CreateWeatherEventRequest(
-            title = "Tornado Confirmed",
-            description = "Tornado touched the ground",
-            photoUrl = "url2.jpg"
-        )
-
-        mockMvc.perform(
-            put("/api/events/{id}", event.id!!)
-                .header("Authorization", authHeaderFor(caller))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(request))
-        )
-            .andExpect(status().isOk)
-            .andExpect(jsonPath("$.userId").value(testUser.id.toString()))
-            .andExpect(jsonPath("$.authorName").value("Test Pilot"))
-    }
-
-    @Test
     fun `deletes an existing event and returns 204 No Content`() {
         val event = persistEvent(owner = testUser, title = "Event to delete", description = "...", photoUrl = "url.jpg")
 
@@ -166,5 +146,61 @@ class WeatherEventControllerTest : IntegrationTestBase() {
                 .contentType(MediaType.APPLICATION_JSON)
         )
             .andExpect(status().isNotFound)
+    }
+
+    @Test
+    fun `refuses to update an event owned by another user`() {
+        val owner = persistUser(email = "owner@skydex.com")
+        val intruder = persistUser(email = "intruder@skydex.com")
+        val event = persistEvent(owner, title = "Owner's storm")
+
+        val payload = CreateWeatherEventRequest(
+            title = "Hijacked",
+            description = "Not mine",
+            photoUrl = "http://localhost:8080/api/photos/x.jpg"
+        )
+
+        mockMvc.perform(
+            put("/api/events/{id}", event.id!!)
+                .header("Authorization", authHeaderFor(intruder))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload))
+        )
+            .andExpect(status().isForbidden)
+            .andExpect(jsonPath("$.error").value("You can only modify your own captures"))
+
+        val unchanged = weatherEventRepository.findById(event.id!!).orElseThrow()
+        assertEquals("Owner's storm", unchanged.title)
+    }
+
+    @Test
+    fun `refuses to delete an event owned by another user`() {
+        val owner = persistUser(email = "owner2@skydex.com")
+        val intruder = persistUser(email = "intruder2@skydex.com")
+        val event = persistEvent(owner)
+
+        mockMvc.perform(
+            delete("/api/events/{id}", event.id!!)
+                .header("Authorization", authHeaderFor(intruder))
+        )
+            .andExpect(status().isForbidden)
+
+        assertTrue(weatherEventRepository.existsById(event.id!!))
+    }
+
+    @Test
+    fun `returns 401 rather than 500 for a malformed token`() {
+        mockMvc.perform(
+            get("/api/events/mine")
+                .header("Authorization", "Bearer not-a-real-jwt")
+        )
+            .andExpect(status().isUnauthorized)
+            .andExpect(jsonPath("$.error").value("Authentication required"))
+    }
+
+    @Test
+    fun `returns 401 when no token is supplied`() {
+        mockMvc.perform(get("/api/events/mine"))
+            .andExpect(status().isUnauthorized)
     }
 }

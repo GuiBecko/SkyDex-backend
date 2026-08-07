@@ -51,6 +51,23 @@ class AuthControllerTest : IntegrationTestBase() {
     }
 
     @Test
+    fun `rejects registration with a password shorter than 8 characters`() {
+        val request = RegisterRequest(
+            name = "Too Short",
+            email = "short@skydex.com",
+            password = "short"
+        )
+
+        mockMvc.perform(
+            post("/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("password: Password must be at least 8 characters long"))
+    }
+
+    @Test
     fun `logs in with valid credentials and returns a token`() {
         val plainPassword = "my-secret-password"
         persistUser(name = "SkyDex Admin", email = "admin@skydex.com", password = plainPassword)

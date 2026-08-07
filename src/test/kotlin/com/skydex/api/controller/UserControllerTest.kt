@@ -12,16 +12,15 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
-import java.util.UUID
 
 class UserControllerTest : IntegrationTestBase() {
 
     @Test
-    fun `finds a user by id and returns 200`() {
+    fun `finds the authenticated user and returns 200`() {
         val user = persistUser(name = "Guilherme", email = "busca@test.com")
 
         mockMvc.perform(
-            get("/api/users/{id}", user.id!!)
+            get("/api/users/me")
                 .header("Authorization", authHeaderFor(user))
                 .contentType(MediaType.APPLICATION_JSON)
         )
@@ -31,13 +30,13 @@ class UserControllerTest : IntegrationTestBase() {
     }
 
     @Test
-    fun `updates an existing user and returns 200`() {
+    fun `updates the authenticated user's profile and returns 200`() {
         val user = persistUser(name = "Old Name", email = "old@test.com")
 
         val request = UpdateProfileRequest(name = "Guilherme", email = "new@test.com")
 
         mockMvc.perform(
-            put("/api/users/{id}", user.id!!)
+            put("/api/users/me")
                 .header("Authorization", authHeaderFor(user))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request))
@@ -48,11 +47,11 @@ class UserControllerTest : IntegrationTestBase() {
     }
 
     @Test
-    fun `deletes an existing user and returns 204 No Content`() {
+    fun `deletes the authenticated user and returns 204 No Content`() {
         val user = persistUser(name = "User to delete", email = "delete@test.com")
 
         mockMvc.perform(
-            delete("/api/users/{id}", user.id!!)
+            delete("/api/users/me")
                 .header("Authorization", authHeaderFor(user))
         )
             .andExpect(status().isNoContent)
@@ -62,26 +61,13 @@ class UserControllerTest : IntegrationTestBase() {
     }
 
     @Test
-    fun `returns 404 Not Found when looking up an id that does not exist`() {
-        val unknownId = UUID.randomUUID()
-        val requester = persistUser(email = "requester@skydex.com")
-
-        mockMvc.perform(
-            get("/api/users/{id}", unknownId)
-                .header("Authorization", authHeaderFor(requester))
-                .contentType(MediaType.APPLICATION_JSON)
-        )
-            .andExpect(status().isNotFound)
-    }
-
-    @Test
-    fun `lists a user's events and returns 200`() {
+    fun `lists the authenticated user's events and returns 200`() {
         val user = persistUser(email = "events-owner@skydex.com")
         persistEvent(owner = user, title = "Heavy Rain", description = "Storm in the region", photoUrl = "http://photo1.jpg")
         persistEvent(owner = user, title = "Hail", description = "Small ice stones", photoUrl = "http://photo2.jpg")
 
         mockMvc.perform(
-            get("/api/users/{id}/events", user.id!!)
+            get("/api/users/me/events")
                 .header("Authorization", authHeaderFor(user))
                 .contentType(MediaType.APPLICATION_JSON)
         )
@@ -94,7 +80,7 @@ class UserControllerTest : IntegrationTestBase() {
         val user = persistUser(name = "Leak Check", email = "leak@skydex.com", password = "plain-text-secret")
 
         mockMvc.perform(
-            get("/api/users/{id}", user.id!!)
+            get("/api/users/me")
                 .header("Authorization", authHeaderFor(user))
                 .contentType(MediaType.APPLICATION_JSON)
         )
@@ -105,5 +91,35 @@ class UserControllerTest : IntegrationTestBase() {
             .andExpect(jsonPath("$.passwordHash").doesNotExist())
             .andExpect(jsonPath("$.authorities").doesNotExist())
             .andExpect(jsonPath("$.enabled").doesNotExist())
+    }
+
+    @Test
+    fun `me returns the authenticated user`() {
+        val user = persistUser(name = "Self", email = "self@skydex.com")
+
+        mockMvc.perform(
+            get("/api/users/me").header("Authorization", authHeaderFor(user))
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.id").value(user.id!!.toString()))
+            .andExpect(jsonPath("$.name").value("Self"))
+            .andExpect(jsonPath("$.password").doesNotExist())
+    }
+
+    @Test
+    fun `rejects a profile update that would take another user's email`() {
+        persistUser(email = "taken@skydex.com")
+        val user = persistUser(email = "mover@skydex.com")
+
+        val payload = UpdateProfileRequest(name = "Mover", email = "taken@skydex.com")
+
+        mockMvc.perform(
+            put("/api/users/me")
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload))
+        )
+            .andExpect(status().isConflict)
+            .andExpect(jsonPath("$.error").value("Email already registered"))
     }
 }

@@ -1,5 +1,6 @@
 package com.skydex.api.security
 
+import com.auth0.jwt.exceptions.JWTVerificationException
 import com.skydex.api.repositories.UserRepository
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
@@ -9,45 +10,46 @@ import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.stereotype.Component
 import org.springframework.web.filter.OncePerRequestFilter
 
+/**
+ * Reads the bearer token from each request and, if it is valid, marks the caller as
+ * authenticated. An invalid or expired token leaves the context anonymous; the entry point
+ * configured in SecurityConfig turns that into a 401.
+ */
 @Component
 class SecurityFilter(
     private val tokenService: TokenService,
     private val userRepository: UserRepository
 ) : OncePerRequestFilter() {
 
-    // Esta função corre UMA VEZ a cada pedido que chega à tua API
     override fun doFilterInternal(
         request: HttpServletRequest,
         response: HttpServletResponse,
         filterChain: FilterChain
     ) {
-        // 1. Tenta encontrar o token no cabeçalho do pedido
         val token = recoverToken(request)
 
         if (token != null) {
-            // 2. Se encontrou, pede ao TokenService para validar e devolver o email
-            val email = tokenService.validateToken(token)
+            val email = try {
+                tokenService.validateToken(token)
+            } catch (e: JWTVerificationException) {
+                null
+            }
 
-            // 3. Procura o utilizador dono desse email na base de dados
-            val user = userRepository.findByEmail(email)
-
-            if (user != null) {
-                // 4. Avisa o Spring Security: "Está tudo certo, podes considerar este utilizador autenticado!"
-                val authentication = UsernamePasswordAuthenticationToken(user, null, emptyList())
-                SecurityContextHolder.getContext().authentication = authentication
+            if (email != null) {
+                val user = userRepository.findByEmail(email)
+                if (user != null) {
+                    SecurityContextHolder.getContext().authentication =
+                        UsernamePasswordAuthenticationToken(user, null, user.authorities)
+                }
             }
         }
 
-        // 5. Continua o fluxo normal do pedido (se não estiver autenticado, o próprio Spring bloqueia depois)
         filterChain.doFilter(request, response)
     }
 
-    // Função auxiliar para extrair apenas o código do token, retirando a palavra "Bearer "
     private fun recoverToken(request: HttpServletRequest): String? {
-        val authHeader = request.getHeader("Authorization")
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            return null
-        }
-        return authHeader.replace("Bearer ", "")
+        val authHeader = request.getHeader("Authorization") ?: return null
+        if (!authHeader.startsWith("Bearer ")) return null
+        return authHeader.removePrefix("Bearer ").trim().ifBlank { null }
     }
 }

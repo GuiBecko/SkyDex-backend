@@ -2,6 +2,8 @@ package com.skydex.api.controllers
 
 import com.skydex.api.dto.CreateWeatherEventRequest
 import com.skydex.api.dto.WeatherEventResponse
+import com.skydex.api.errors.ForbiddenException
+import com.skydex.api.errors.NotFoundException
 import com.skydex.api.models.User
 import com.skydex.api.models.WeatherEvent
 import com.skydex.api.repositories.UserRepository
@@ -54,28 +56,37 @@ class WeatherEventController(
     }
 
     @GetMapping("/{id}")
-    fun getById(@PathVariable id: UUID): ResponseEntity<WeatherEventResponse> {
-        val event = events.findById(id).orElse(null) ?: return ResponseEntity.notFound().build()
-        val author = users.findById(event.userId).orElse(null) ?: return ResponseEntity.notFound().build()
-        return ResponseEntity.ok(WeatherEventResponse.from(event, author))
+    fun getById(@PathVariable id: UUID): WeatherEventResponse {
+        val event = events.findById(id).orElseThrow { NotFoundException("Capture not found") }
+        val author = users.findById(event.userId).orElseThrow { NotFoundException("Capture not found") }
+        return WeatherEventResponse.from(event, author)
     }
 
     @PutMapping("/{id}")
     fun update(
+        @AuthenticationPrincipal currentUser: User,
         @PathVariable id: UUID,
         @Valid @RequestBody request: CreateWeatherEventRequest
-    ): ResponseEntity<WeatherEventResponse> {
-        val event = events.findById(id).orElse(null) ?: return ResponseEntity.notFound().build()
-        val author = users.findById(event.userId).orElse(null) ?: return ResponseEntity.notFound().build()
+    ): WeatherEventResponse {
+        val event = events.findById(id).orElseThrow { NotFoundException("Capture not found") }
+        if (event.userId != currentUser.id) {
+            throw ForbiddenException("You can only modify your own captures")
+        }
         event.title = request.title
         event.description = request.description
         event.photoUrl = request.photoUrl
-        return ResponseEntity.ok(WeatherEventResponse.from(events.save(event), author))
+        return WeatherEventResponse.from(events.save(event), currentUser)
     }
 
     @DeleteMapping("/{id}")
-    fun delete(@PathVariable id: UUID): ResponseEntity<Void> {
-        val event = events.findById(id).orElse(null) ?: return ResponseEntity.notFound().build()
+    fun delete(
+        @AuthenticationPrincipal currentUser: User,
+        @PathVariable id: UUID
+    ): ResponseEntity<Void> {
+        val event = events.findById(id).orElseThrow { NotFoundException("Capture not found") }
+        if (event.userId != currentUser.id) {
+            throw ForbiddenException("You can only modify your own captures")
+        }
         events.delete(event)
         return ResponseEntity.noContent().build()
     }

@@ -25,7 +25,7 @@ class UserControllerTest : IntegrationTestBase() {
     private lateinit var usuarioTesteId: UUID
     private val emailTeste = "skydex@gmail.com"
 
-    // Cria o usuário de fixture usado pelos testes
+    // Creates the fixture user used by the tests
     @BeforeEach
     fun setUpFixtures() {
         val user = User(

@@ -20,7 +20,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     private val emailTeste = "teste@skydex.com"
 
 
-    // Antes de cada teste, criamos um usuário para associar aos eventos
+    // Before each test, create a user to associate with the events
     @BeforeEach
     fun setUpFixtures() {
         val user = User(

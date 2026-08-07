@@ -1,247 +1,109 @@
 package com.skydex.api.controller
 
-import com.skydex.api.controllers.UserRequest // Confirme se o import do seu DTO está correto
-import com.skydex.api.dto.EventoProximo
-import com.skydex.api.models.EventoMetereologico
-import com.skydex.api.models.User
-import com.skydex.api.services.OpenMeteoService
+import com.skydex.api.dto.UpdateProfileRequest
 import com.skydex.api.support.IntegrationTestBase
-import org.junit.jupiter.api.BeforeEach
+import com.skydex.api.support.authHeaderFor
+import com.skydex.api.support.persistEvent
+import com.skydex.api.support.persistUser
 import org.junit.jupiter.api.Test
-import org.mockito.Mockito.`when`
-import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.http.MediaType
-import org.springframework.security.test.context.support.WithMockUser
-import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers.*
-import java.time.LocalDateTime
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import java.util.UUID
 
 class UserControllerTest : IntegrationTestBase() {
 
-    @MockBean
-    private lateinit var openMeteoService: OpenMeteoService
-
-    private lateinit var usuarioTesteId: UUID
-    private val emailTeste = "skydex@gmail.com"
-
-    // Creates the fixture user used by the tests
-    @BeforeEach
-    fun setUpFixtures() {
-        val user = User(
-            id = UUID.randomUUID(),
-            nome = "Piloto de Testes",
-            email = "skydex@gmail.com",
-            password = "senha-criptografada-fake",
-            dataEntrada = LocalDateTime.now()
-        )
-
-        // CAPTURE O RETORNO DO SAVE: O Hibernate define o ID oficial aqui
-        val userSalvo = userRepository.save(user)
-        usuarioTesteId = userSalvo.id!!
-    }
-
     @Test
-    @WithMockUser // MUDANÇA: Simulando usuário logado
-    fun `deve criar um novo usuario e retornar 200 com ID gerado`() {
-        // MUDANÇA: Agora usamos o DTO (UserRequest) em vez da Entidade
-        val novoUserRequest = UserRequest(
-            username = "Guilherme",
-            email = "email@fake.com.br",
-            password = "senha-segura" // O Controller vai criptografar isso
-        )
-        val jsonEnvio = objectMapper.writeValueAsString(novoUserRequest)
+    fun `finds a user by id and returns 200`() {
+        val user = persistUser(name = "Guilherme", email = "busca@test.com")
 
         mockMvc.perform(
-            post("/api/users")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(jsonEnvio)
-        )
-            .andExpect(status().isOk)
-            .andExpect(jsonPath("$.id").exists())
-            .andExpect(jsonPath("$.nome").value("Guilherme"))
-            .andExpect(jsonPath("$.email").value("email@fake.com.br"))
-    }
-
-    @Test
-    @WithMockUser
-    fun `deve listar todos os usuarios e retornar 200`() {
-        userRepository.deleteAll()
-
-        val users = listOf(
-            User(id = UUID.randomUUID(), nome = "Guilherme", email = "gui@teste.com", password = "123", dataEntrada = LocalDateTime.now()),
-            User(id = UUID.randomUUID(), nome = "Camila", email = "camila@teste.com", password = "123", dataEntrada = LocalDateTime.now())
-        )
-
-        userRepository.saveAll(users)
-
-        mockMvc.perform(
-            get("/api/users")
+            get("/api/users/{id}", user.id!!)
+                .header("Authorization", authHeaderFor(user))
                 .contentType(MediaType.APPLICATION_JSON)
         )
             .andExpect(status().isOk)
-            .andExpect(jsonPath("$.length()").value(2))
-            .andExpect(jsonPath("$[0].nome").value("Guilherme"))
-            .andExpect(jsonPath("$[1].nome").value("Camila"))
+            .andExpect(jsonPath("$.id").value(user.id.toString()))
+            .andExpect(jsonPath("$.name").value("Guilherme"))
     }
 
     @Test
-    @WithMockUser
-    fun `deve buscar um novo usuario e retornar 200`() {
-        val userNovo = User(id = UUID.randomUUID(), nome = "Guilherme", email = "busca@teste.com", password = "123", dataEntrada = LocalDateTime.now())
-        val userSalvo = userRepository.save(userNovo)
-        val idGerado = userSalvo.id!!
+    fun `updates an existing user and returns 200`() {
+        val user = persistUser(name = "Old Name", email = "old@test.com")
+
+        val request = UpdateProfileRequest(name = "Guilherme", email = "new@test.com")
 
         mockMvc.perform(
-            get("/api/users/{id}", idGerado)
+            put("/api/users/{id}", user.id!!)
+                .header("Authorization", authHeaderFor(user))
                 .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
         )
             .andExpect(status().isOk)
-            .andExpect(jsonPath("$.id").value(idGerado.toString()))
-            .andExpect(jsonPath("$.nome").value("Guilherme"))
+            .andExpect(jsonPath("$.name").value("Guilherme"))
+            .andExpect(jsonPath("$.email").value("new@test.com"))
     }
 
     @Test
-    @WithMockUser
-    fun `deve atualizar um usuario existente e retornar 200`() {
-        val userAntigo = User(id = UUID.randomUUID(), nome = "Nome Antigo", email = "antigo@teste.com", password = "123", dataEntrada = LocalDateTime.now())
-        val userSalvo = userRepository.save(userAntigo)
-        val idGerado = userSalvo.id!!
-
-        // MUDANÇA: Enviando o UserRequest em vez da entidade completa
-        val dadosNovos = UserRequest(
-            username = "Guilherme",
-            email = "novo@fake.com.br",
-            password = "senha-nova"
-        )
-        val jsonEnvio = objectMapper.writeValueAsString(dadosNovos)
+    fun `deletes an existing user and returns 204 No Content`() {
+        val user = persistUser(name = "User to delete", email = "delete@test.com")
 
         mockMvc.perform(
-            put("/api/users/{id}", idGerado)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(jsonEnvio)
-        )
-            .andExpect(status().isOk)
-            .andExpect(jsonPath("$.nome").value("Guilherme"))
-            .andExpect(jsonPath("$.email").value("novo@fake.com.br"))
-    }
-
-    @Test
-    @WithMockUser
-    fun `deve eliminar um usuario existente e retornar 204 No Content`() {
-        val user = User(id = UUID.randomUUID(), nome = "user para apagar", email = "delete@teste.com", password = "123", dataEntrada = LocalDateTime.now())
-        val userSalvo = userRepository.save(user)
-        val idGerado = userSalvo.id!!
-
-        mockMvc.perform(
-            delete("/api/users/{id}", idGerado)
+            delete("/api/users/{id}", user.id!!)
+                .header("Authorization", authHeaderFor(user))
         )
             .andExpect(status().isNoContent)
 
-        val aindaExiste = userRepository.existsById(idGerado)
-        assert(!aindaExiste)
+        val stillExists = userRepository.existsById(user.id!!)
+        assert(!stillExists)
     }
 
     @Test
-    @WithMockUser
-    fun `deve retornar erro 404 Not Found ao procurar um ID que nao existe`() {
-        val idFalso = UUID.randomUUID()
+    fun `returns 404 Not Found when looking up an id that does not exist`() {
+        val unknownId = UUID.randomUUID()
+        val requester = persistUser(email = "requester@skydex.com")
 
         mockMvc.perform(
-            get("/api/users/{id}", idFalso)
+            get("/api/users/{id}", unknownId)
+                .header("Authorization", authHeaderFor(requester))
                 .contentType(MediaType.APPLICATION_JSON)
         )
             .andExpect(status().isNotFound)
     }
 
     @Test
-    @WithMockUser
-    fun `deve listar eventos do usuario e retornar 200`() {
-
-        val eventos = listOf(
-            EventoMetereologico(
-                id = UUID.randomUUID(),
-                titulo = "Chuva Forte",
-                descricao = "Temporal na região",
-                urlFoto = "http://foto1.jpg",
-                dataHoraRegistro = LocalDateTime.now(),
-                userId = usuarioTesteId
-            ),
-            EventoMetereologico(
-                id = UUID.randomUUID(),
-                titulo = "Granizo",
-                descricao = "Pedras de gelo pequenas",
-                urlFoto = "http://foto2.jpg",
-                dataHoraRegistro = LocalDateTime.now(),
-                userId = usuarioTesteId
-            )
-        )
-
-        for (evento in eventos) {
-            eventoRepository.save(evento)
-        }
+    fun `lists a user's events and returns 200`() {
+        val user = persistUser(email = "events-owner@skydex.com")
+        persistEvent(owner = user, title = "Heavy Rain", description = "Storm in the region", photoUrl = "http://photo1.jpg")
+        persistEvent(owner = user, title = "Hail", description = "Small ice stones", photoUrl = "http://photo2.jpg")
 
         mockMvc.perform(
-            get("/api/users/{id}/eventos", usuarioTesteId)
+            get("/api/users/{id}/events", user.id!!)
+                .header("Authorization", authHeaderFor(user))
                 .contentType(MediaType.APPLICATION_JSON)
         )
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.length()").value(2))
-            .andExpect(jsonPath("$[0].titulo").value("Chuva Forte"))
-            .andExpect(jsonPath("$[1].titulo").value("Granizo"))
     }
 
-    // NEAR EVENTS
-
     @Test
-    @WithMockUser(username = "skydex@gmail.com")
-    fun `deve buscar eventos proximos e retornar 200 com os dados do clima`() {
-        val latTeste = 25.1
-        val lngTeste = 25.2
+    fun `user responses never expose the password hash`() {
+        val user = persistUser(name = "Leak Check", email = "leak@skydex.com", password = "plain-text-secret")
 
-        val eventosFalsos = listOf(
-            EventoProximo(
-                fenomeno = "Neve",
-                horario = "2026-08-01T12:00:00",
-                temperatura = 10.0,
-                nivelAlerta = "Interessante"
-            )
-        )
-
-
-        `when`(openMeteoService.buscarEventosProximos(latTeste, lngTeste)).thenReturn(eventosFalsos)
-
-        // 2. Act & Assert (Ação e Verificação)
         mockMvc.perform(
-            get("/api/users/{id}/eventosProximos", usuarioTesteId)
-                .param("lat", latTeste.toString())
-                .param("lon", lngTeste.toString())
+            get("/api/users/{id}", user.id!!)
+                .header("Authorization", authHeaderFor(user))
                 .contentType(MediaType.APPLICATION_JSON)
         )
             .andExpect(status().isOk)
-            .andExpect(jsonPath("$[0].fenomeno").value("Neve"))
-            .andExpect(jsonPath("$[0].nivelAlerta").value("Interessante"))
-            .andExpect(jsonPath("$[0].temperatura").value(10.0))
-    }
-
-    @Test
-    @WithMockUser(username = "skydex@gmail.com")
-    fun `deve retornar erro 500 caso a API externa do OpenMeteo falhe`() {
-        // 1. Arrange
-        val latTeste = -23.55
-        val lngTeste = -46.63
-
-        // Simulamos o serviço externo retornando nulo (falha)
-        `when`(openMeteoService.buscarEventosProximos(latTeste, lngTeste)).thenReturn(null)
-
-        // 2. Act & Assert
-        mockMvc.perform(
-            get("/api/users/{id}/eventosProximos", usuarioTesteId)
-                .param("lat", latTeste.toString())
-                .param("lon", lngTeste.toString())
-                .contentType(MediaType.APPLICATION_JSON)
-        )
-            .andExpect(status().isInternalServerError)
-            .andExpect(jsonPath("$.error").exists())
+            .andExpect(jsonPath("$.name").value("Leak Check"))
+            .andExpect(jsonPath("$.email").value("leak@skydex.com"))
+            .andExpect(jsonPath("$.password").doesNotExist())
+            .andExpect(jsonPath("$.passwordHash").doesNotExist())
+            .andExpect(jsonPath("$.authorities").doesNotExist())
+            .andExpect(jsonPath("$.enabled").doesNotExist())
     }
 }

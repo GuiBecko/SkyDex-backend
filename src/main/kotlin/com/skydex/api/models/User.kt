@@ -1,10 +1,15 @@
 package com.skydex.api.models
 
-import jakarta.persistence.*
+import jakarta.persistence.Column
+import jakarta.persistence.Entity
+import jakarta.persistence.GeneratedValue
+import jakarta.persistence.GenerationType
+import jakarta.persistence.Id
+import jakarta.persistence.Table
 import org.springframework.security.core.GrantedAuthority
 import org.springframework.security.core.authority.SimpleGrantedAuthority
 import org.springframework.security.core.userdetails.UserDetails
-import java.time.LocalDateTime
+import java.time.Instant
 import java.util.UUID
 
 @Entity
@@ -15,28 +20,27 @@ class User(
     var id: UUID? = null,
 
     @Column(nullable = false)
-    var nome: String? = "",
+    var name: String = "",
 
-    @Column(nullable = false)
-    var email: String? = "",
+    @Column(nullable = false, unique = true)
+    var email: String = "",
 
-    @Column(nullable = false)
-    private var password: String? = "",
+    @Column(name = "password_hash", nullable = false)
+    private var passwordHash: String = "",
 
-    @Column
-    var dataEntrada: LocalDateTime = LocalDateTime.now()
-): UserDetails {
-    override fun getAuthorities(): MutableCollection<out GrantedAuthority> {
-        return mutableListOf(SimpleGrantedAuthority("ROLE_USER"))
-    }
+    @Column(name = "joined_at", nullable = false)
+    var joinedAt: Instant = Instant.now()
+) : UserDetails {
 
-    override fun getPassword(): String? = this.password
+    override fun getAuthorities(): MutableCollection<out GrantedAuthority> =
+        mutableListOf(SimpleGrantedAuthority("ROLE_USER"))
 
-    override fun getUsername(): String? = this.email
+    override fun getPassword(): String = passwordHash
+
+    override fun getUsername(): String = email
 
     override fun isAccountNonExpired(): Boolean = true
     override fun isAccountNonLocked(): Boolean = true
     override fun isCredentialsNonExpired(): Boolean = true
     override fun isEnabled(): Boolean = true
-    fun definirSenha(novaSenha: String?){this.password = novaSenha}
 }

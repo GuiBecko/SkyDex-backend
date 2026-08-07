@@ -1,28 +1,21 @@
 package com.skydex.api.controller
 
-import com.skydex.api.controllers.LoginRequest
-import com.skydex.api.controllers.RegisterRequest
-import com.skydex.api.models.User
+import com.skydex.api.dto.LoginRequest
+import com.skydex.api.dto.RegisterRequest
 import com.skydex.api.support.IntegrationTestBase
+import com.skydex.api.support.persistUser
 import org.junit.jupiter.api.Test
-import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.MediaType
-import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
-import java.time.LocalDateTime
-import java.util.UUID
 
 class AuthControllerTest : IntegrationTestBase() {
 
-    @Autowired
-    private lateinit var passwordEncoder: PasswordEncoder
-
     @Test
-    fun `registers a new user and returns 200`() {
+    fun `registers a new user and returns 201`() {
         val request = RegisterRequest(
-            nome = "Dev SkyDex",
+            name = "Dev SkyDex",
             email = "dev@skydex.com",
             password = "super-safe-password"
         )
@@ -32,24 +25,18 @@ class AuthControllerTest : IntegrationTestBase() {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request))
         )
-            .andExpect(status().isOk)
-            .andExpect(jsonPath("$.mensagem").value("Usuário Registrado com sucesso"))
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.id").exists())
+            .andExpect(jsonPath("$.name").value("Dev SkyDex"))
+            .andExpect(jsonPath("$.email").value("dev@skydex.com"))
     }
 
     @Test
     fun `rejects registration with an email that already exists`() {
-        userRepository.save(
-            User(
-                id = UUID.randomUUID(),
-                nome = "Existing User",
-                email = "conflict@skydex.com",
-                password = passwordEncoder.encode("any-password"),
-                dataEntrada = LocalDateTime.now()
-            )
-        )
+        persistUser(name = "Existing User", email = "conflict@skydex.com", password = "any-password")
 
         val request = RegisterRequest(
-            nome = "Impostor",
+            name = "Impostor",
             email = "conflict@skydex.com",
             password = "another-password"
         )
@@ -60,21 +47,13 @@ class AuthControllerTest : IntegrationTestBase() {
                 .content(objectMapper.writeValueAsString(request))
         )
             .andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.error").value("Usuário com esse email já cadastrado"))
+            .andExpect(jsonPath("$.error").value("Email already registered"))
     }
 
     @Test
     fun `logs in with valid credentials and returns a token`() {
         val plainPassword = "my-secret-password"
-        userRepository.save(
-            User(
-                id = UUID.randomUUID(),
-                nome = "SkyDex Admin",
-                email = "admin@skydex.com",
-                password = passwordEncoder.encode(plainPassword),
-                dataEntrada = LocalDateTime.now()
-            )
-        )
+        persistUser(name = "SkyDex Admin", email = "admin@skydex.com", password = plainPassword)
 
         mockMvc.perform(
             post("/auth/login")
@@ -82,20 +61,14 @@ class AuthControllerTest : IntegrationTestBase() {
                 .content(objectMapper.writeValueAsString(LoginRequest("admin@skydex.com", plainPassword)))
         )
             .andExpect(status().isOk)
-            .andExpect(jsonPath("$.tokenGerado").exists())
+            .andExpect(jsonPath("$.token").exists())
+            .andExpect(jsonPath("$.userId").exists())
+            .andExpect(jsonPath("$.name").value("SkyDex Admin"))
     }
 
     @Test
     fun `rejects login with the wrong password`() {
-        userRepository.save(
-            User(
-                id = UUID.randomUUID(),
-                nome = "SkyDex Admin",
-                email = "admin@skydex.com",
-                password = passwordEncoder.encode("right-password"),
-                dataEntrada = LocalDateTime.now()
-            )
-        )
+        persistUser(name = "SkyDex Admin", email = "admin@skydex.com", password = "right-password")
 
         mockMvc.perform(
             post("/auth/login")
@@ -103,7 +76,7 @@ class AuthControllerTest : IntegrationTestBase() {
                 .content(objectMapper.writeValueAsString(LoginRequest("admin@skydex.com", "wrong-password")))
         )
             .andExpect(status().isUnauthorized)
-            .andExpect(jsonPath("$.error").value("email ou senha inválidos"))
+            .andExpect(jsonPath("$.error").value("Invalid email or password"))
     }
 
     @Test
@@ -113,7 +86,7 @@ class AuthControllerTest : IntegrationTestBase() {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(LoginRequest("ghost@skydex.com", "whatever")))
         )
-            .andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.error").value("Usuário não encontrado"))
+            .andExpect(status().isUnauthorized)
+            .andExpect(jsonPath("$.error").value("Invalid email or password"))
     }
 }

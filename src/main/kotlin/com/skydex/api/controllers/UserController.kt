@@ -1,129 +1,60 @@
 package com.skydex.api.controllers
 
-import com.skydex.api.models.EventoMetereologico
+import com.skydex.api.dto.ErrorResponse
+import com.skydex.api.dto.UpdateProfileRequest
+import com.skydex.api.dto.UserResponse
+import com.skydex.api.dto.WeatherEventResponse
 import com.skydex.api.models.User
-import com.skydex.api.repositories.EventoRepository
 import com.skydex.api.repositories.UserRepository
-import com.skydex.api.services.OpenMeteoService
+import com.skydex.api.repositories.WeatherEventRepository
 import jakarta.validation.Valid
-import jakarta.validation.constraints.Email
-import jakarta.validation.constraints.NotBlank
 import org.springframework.http.ResponseEntity
-import org.springframework.security.crypto.password.PasswordEncoder
-import org.springframework.web.bind.annotation.*
+import org.springframework.security.core.annotation.AuthenticationPrincipal
+import org.springframework.web.bind.annotation.DeleteMapping
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
+import org.springframework.web.bind.annotation.PutMapping
+import org.springframework.web.bind.annotation.RequestBody
+import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RestController
 import java.util.UUID
-
-data class UserRequest(
-    @field:NotBlank(message = "Nome de usuário nao deve ser nulo")
-    val username: String,
-
-    @field:NotBlank(message = "Email nao deve ser nulo")
-    @field:Email(message = "E-mail deve ter formato valido")
-    val email: String,
-
-    @field:NotBlank(message = "Senha nao deve ser nulo")
-    val password: String
-)
 
 @RestController
 @RequestMapping("/api/users")
 class UserController(
-    private val openMeteoService: OpenMeteoService,
-    private val repo: UserRepository,
-    private val eventRepo: EventoRepository,
-    private val passwordEncoder: PasswordEncoder
+    private val users: UserRepository,
+    private val events: WeatherEventRepository
 ) {
-    @PostMapping
-    fun CriarUsuario(@Valid @RequestBody user: UserRequest): ResponseEntity<User> {
-        val userNovo = User(
-            nome = user.username,
-            email = user.email,
-            password = passwordEncoder.encode(user.password)
-        )
-
-        val userSalvo = repo.save(userNovo)
-        return ResponseEntity.ok(userSalvo)
-    }
-
-    @GetMapping
-    fun MostrarUsuarios(): ResponseEntity< List<User> > {
-        val users = repo.findAll()
-        return ResponseEntity.ok(users)
-    }
 
     @GetMapping("/{id}")
-    fun buscarUsuarioPorId(@PathVariable id: UUID): ResponseEntity<User> {
-        val user = repo.findById(id)
-
-        if (user.isPresent) {
-            return ResponseEntity.ok(user.get())
-        }else {
-            return ResponseEntity.notFound().build()
-        }
+    fun getById(@PathVariable id: UUID): ResponseEntity<UserResponse> {
+        val user = users.findById(id).orElse(null) ?: return ResponseEntity.notFound().build()
+        return ResponseEntity.ok(UserResponse.from(user))
     }
 
     @PutMapping("/{id}")
-    fun updateUser(@PathVariable id: UUID, @Valid @RequestBody user: UserRequest): ResponseEntity<User> {
-        val userBusca = repo.findById(id)
-
-        if (userBusca.isPresent) {
-            val userOriginal = userBusca.get()
-            userOriginal.nome = user.username
-            userOriginal.email = user.email
-            userOriginal.definirSenha(passwordEncoder.encode(user.password))
-            return ResponseEntity.ok(repo.save(userOriginal))
-        } else {
-            return ResponseEntity.notFound().build()
-        }
-    }
-
-    @DeleteMapping
-    fun deleteUsers(): ResponseEntity<String> {
-        val users = repo.deleteAll()
-        return ResponseEntity.ok("Deletado com sucesso!")
+    fun update(
+        @PathVariable id: UUID,
+        @Valid @RequestBody request: UpdateProfileRequest
+    ): ResponseEntity<UserResponse> {
+        val user = users.findById(id).orElse(null) ?: return ResponseEntity.notFound().build()
+        user.name = request.name
+        user.email = request.email
+        return ResponseEntity.ok(UserResponse.from(users.save(user)))
     }
 
     @DeleteMapping("/{id}")
-    fun deleteUser(@PathVariable id: UUID): ResponseEntity<String> {
-        val user = repo.findById(id)
-
-        return if (user.isPresent) {
-            repo.delete(user.get())
-            ResponseEntity.noContent().build()
-        } else {
-            ResponseEntity.notFound().build()
-        }
+    fun delete(@PathVariable id: UUID): ResponseEntity<Void> {
+        val user = users.findById(id).orElse(null) ?: return ResponseEntity.notFound().build()
+        users.delete(user)
+        return ResponseEntity.noContent().build()
     }
 
-    @GetMapping("/{id}/eventos")
-    fun listUserEvents(@PathVariable id: UUID): ResponseEntity<Any>{
-        val userBusca = repo.findById(id)
-        if (userBusca.isEmpty) {
-            return ResponseEntity.status(404).body(mapOf("error" to "Usuário não encontrado"))
-        }
-
-        var userEvents: List<EventoMetereologico>  = eventRepo.findByUserId(id)
-
-        if (userEvents.isEmpty()) {
-            return ResponseEntity.status(404).body(mapOf("error" to "Usuário nao tem Eventos"))
-        }
-
-        return ResponseEntity.status(200).body(userEvents)
-
+    @GetMapping("/{id}/events")
+    fun listEvents(@PathVariable id: UUID): ResponseEntity<Any> {
+        val user = users.findById(id).orElse(null)
+            ?: return ResponseEntity.status(404).body(ErrorResponse("User not found"))
+        val list = events.findByUserIdOrderByCapturedAtDesc(id)
+        return ResponseEntity.ok(list.map { WeatherEventResponse.from(it, user) })
     }
-
-    @GetMapping("{id}/eventosProximos")
-    fun listNearEvents(
-        @PathVariable id: UUID,
-        @RequestParam lat: Double,
-        @RequestParam lon: Double,
-    ): ResponseEntity<Any>{
-        val climaNaRegiao = openMeteoService.buscarEventosProximos(lat, lon)
-        return if (climaNaRegiao != null) {
-            ResponseEntity.ok(climaNaRegiao)
-        }else{
-            ResponseEntity.status(500).body(mapOf("error" to "Falha ao buscar dados metereológicos"))
-        }
-    }
-
 }

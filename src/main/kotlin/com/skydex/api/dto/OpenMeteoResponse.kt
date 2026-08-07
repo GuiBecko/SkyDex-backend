@@ -2,15 +2,14 @@ package com.skydex.api.dto
 
 import com.fasterxml.jackson.annotation.JsonProperty
 
-data class OpenMeteoResponse (
+data class OpenMeteoResponse(
     val latitude: Double,
     val longitude: Double,
-    val hourly: HourlyData?,
-    val nivelAlerta: String?
+    val hourly: HourlyData?
 )
 
 data class HourlyData(
     val time: List<String>,
-    val temperature_2m: List<Double?>,
-    val weather_code: List<Int?>
+    @JsonProperty("temperature_2m") val temperatureCelsius: List<Double?>,
+    @JsonProperty("weather_code") val weatherCode: List<Int?>
 )

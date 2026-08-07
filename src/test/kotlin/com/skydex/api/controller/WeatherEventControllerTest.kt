@@ -1,160 +1,124 @@
 package com.skydex.api.controller
 
-import com.skydex.api.controllers.EventoRequest
-import com.skydex.api.models.EventoMetereologico
+import com.skydex.api.dto.CreateWeatherEventRequest
 import com.skydex.api.models.User
 import com.skydex.api.support.IntegrationTestBase
+import com.skydex.api.support.authHeaderFor
+import com.skydex.api.support.persistEvent
+import com.skydex.api.support.persistUser
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.http.MediaType
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
-import org.springframework.security.core.context.SecurityContextHolder
-import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers.*
-import java.time.LocalDateTime
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import java.util.UUID
 
 class WeatherEventControllerTest : IntegrationTestBase() {
 
-    private lateinit var usuarioTesteId: UUID
-    private val emailTeste = "teste@skydex.com"
+    private lateinit var testUser: User
+    private lateinit var authHeader: String
 
-
-    // Before each test, create a user to associate with the events
+    // Before each test, create a user to associate with the events and a bearer token for it
     @BeforeEach
     fun setUpFixtures() {
-        val user = User(
-            id = null, //banco gera no .save()
-            nome = "Piloto de Testes",
-            email = emailTeste,
-            password = "senha-criptografada-fake",
-            dataEntrada = LocalDateTime.now()
-        )
-        userRepository.save(user)
-        usuarioTesteId = user.id!!
-
-        val auth = UsernamePasswordAuthenticationToken(user, null, user.authorities ?: emptyList())
-        SecurityContextHolder.getContext().authentication = auth
+        testUser = persistUser(name = "Test Pilot", email = "pilot@skydex.com")
+        authHeader = authHeaderFor(testUser)
     }
 
     @Test
-    fun `deve registrar um novo evento e retornar 200 com ID gerado`() {
-
-        val novoEventoRequest = EventoRequest(
-            titulo = "Aurora Boreal",
-            descricao = "Luzes verdes brilhantes no céu noturno.",
-            urlFoto = "https://link-da-foto.com/aurora.jpg",
-            userId = usuarioTesteId
+    fun `registers a new event and returns 201 with a generated id`() {
+        val request = CreateWeatherEventRequest(
+            title = "Aurora Borealis",
+            description = "Bright green lights in the night sky.",
+            photoUrl = "https://photo-link.com/aurora.jpg"
         )
 
-        val jsonEnvio = objectMapper.writeValueAsString(novoEventoRequest)
-
         mockMvc.perform(
-            post("/api/eventos")
+            post("/api/events")
+                .header("Authorization", authHeader)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(jsonEnvio)
+                .content(objectMapper.writeValueAsString(request))
         )
-            .andExpect(status().isOk)
+            .andExpect(status().isCreated)
             .andExpect(jsonPath("$.id").exists())
-            .andExpect(jsonPath("$.titulo").value("Aurora Boreal"))
-            .andExpect(jsonPath("$.userId").value(usuarioTesteId.toString()))
+            .andExpect(jsonPath("$.title").value("Aurora Borealis"))
+            .andExpect(jsonPath("$.userId").value(testUser.id.toString()))
     }
 
     @Test
-    fun `deve listar todos os eventos e retornar 200`() {
-        val eventos = listOf(
-            EventoMetereologico(
-                id = UUID.randomUUID(), titulo = "Aurora Boreal", descricao = "luzes", urlFoto = "http://foto1.jpg",
-                dataHoraRegistro = LocalDateTime.now(), userId = usuarioTesteId
-            ),
-            EventoMetereologico(
-                id = UUID.randomUUID(), titulo = "Eclipse", descricao = "eclipse lunar", urlFoto = "http://foto2.jpg",
-                dataHoraRegistro = LocalDateTime.now(), userId = usuarioTesteId
-            )
-        )
-
-        eventoRepository.saveAll(eventos)
+    fun `lists the current user's events and returns 200`() {
+        persistEvent(owner = testUser, title = "Aurora Borealis", description = "lights", photoUrl = "http://photo1.jpg")
+        persistEvent(owner = testUser, title = "Eclipse", description = "lunar eclipse", photoUrl = "http://photo2.jpg")
 
         mockMvc.perform(
-            get("/api/eventos")
+            get("/api/events/mine")
+                .header("Authorization", authHeader)
                 .contentType(MediaType.APPLICATION_JSON)
         )
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.length()").value(2))
-            .andExpect(jsonPath("$[0].titulo").value("Aurora Boreal"))
-            .andExpect(jsonPath("$[1].titulo").value("Eclipse"))
     }
 
     @Test
-    fun `deve buscar um novo evento e retornar 200`() {
-        val eventoNovo = EventoMetereologico(
-            id = UUID.randomUUID(), titulo = "Aurora Boreal", descricao = "luzes", urlFoto = "http://foto1.jpg",
-            dataHoraRegistro = LocalDateTime.now(), userId = usuarioTesteId
-        )
-        val eventoSalvo = eventoRepository.save(eventoNovo)
-        val idGerado = eventoSalvo.id!!
+    fun `finds an event by id and returns 200`() {
+        val event = persistEvent(owner = testUser, title = "Aurora Borealis", description = "lights", photoUrl = "http://photo1.jpg")
 
         mockMvc.perform(
-            get("/api/eventos/{id}", idGerado)
+            get("/api/events/{id}", event.id!!)
+                .header("Authorization", authHeader)
                 .contentType(MediaType.APPLICATION_JSON)
         )
             .andExpect(status().isOk)
-            .andExpect(jsonPath("$.id").value(idGerado.toString()))
-            .andExpect(jsonPath("$.titulo").value("Aurora Boreal"))
+            .andExpect(jsonPath("$.id").value(event.id.toString()))
+            .andExpect(jsonPath("$.title").value("Aurora Borealis"))
     }
 
     @Test
-    fun `deve atualizar um evento existente e retornar 200`() {
-        val eventoAntigo = EventoMetereologico(
-            id = UUID.randomUUID(), titulo = "Titulo Antigo", descricao = "Descricao Antiga", urlFoto = "url1.jpg",
-            dataHoraRegistro = LocalDateTime.now(), userId = usuarioTesteId
-        )
-        val eventoSalvo = eventoRepository.save(eventoAntigo)
-        val idGerado = eventoSalvo.id!!
+    fun `updates an existing event and returns 200`() {
+        val event = persistEvent(owner = testUser, title = "Old Title", description = "Old description", photoUrl = "url1.jpg")
 
-        // Enviando DTO (Request) no PUT
-        val dadosNovos = EventoRequest(
-            titulo = "Tornado Confirmado",
-            descricao = "Tornado tocou o solo",
-            urlFoto = "url2.jpg",
-            userId = usuarioTesteId
+        val request = CreateWeatherEventRequest(
+            title = "Tornado Confirmed",
+            description = "Tornado touched the ground",
+            photoUrl = "url2.jpg"
         )
-        val jsonEnvio = objectMapper.writeValueAsString(dadosNovos)
 
         mockMvc.perform(
-            put("/api/eventos/{id}", idGerado)
+            put("/api/events/{id}", event.id!!)
+                .header("Authorization", authHeader)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(jsonEnvio)
+                .content(objectMapper.writeValueAsString(request))
         )
             .andExpect(status().isOk)
-            .andExpect(jsonPath("$.titulo").value("Tornado Confirmado"))
-            .andExpect(jsonPath("$.urlFoto").value("url2.jpg"))
+            .andExpect(jsonPath("$.title").value("Tornado Confirmed"))
+            .andExpect(jsonPath("$.photoUrl").value("url2.jpg"))
     }
 
     @Test
-    fun `deve eliminar um evento existente e retornar 204 No Content`() {
-        val evento = EventoMetereologico(
-            id = UUID.randomUUID(), titulo = "Evento para apagar", descricao = "...", urlFoto = "url.jpg",
-            dataHoraRegistro = LocalDateTime.now(), userId = usuarioTesteId
-        )
-        val eventoSalvo = eventoRepository.save(evento)
-        val idGerado = eventoSalvo.id!!
+    fun `deletes an existing event and returns 204 No Content`() {
+        val event = persistEvent(owner = testUser, title = "Event to delete", description = "...", photoUrl = "url.jpg")
 
         mockMvc.perform(
-            delete("/api/eventos/{id}", idGerado)
+            delete("/api/events/{id}", event.id!!)
+                .header("Authorization", authHeader)
         )
             .andExpect(status().isNoContent)
 
-        val aindaExiste = eventoRepository.existsById(idGerado)
-        assert(!aindaExiste)
+        val stillExists = weatherEventRepository.existsById(event.id!!)
+        assert(!stillExists)
     }
 
     @Test
-    fun `deve retornar erro 404 Not Found ao procurar um ID que nao existe`() {
-        val idFalso = UUID.randomUUID()
+    fun `returns 404 Not Found when looking up an id that does not exist`() {
+        val unknownId = UUID.randomUUID()
 
         mockMvc.perform(
-            get("/api/eventos/{id}", idFalso)
+            get("/api/events/{id}", unknownId)
+                .header("Authorization", authHeader)
                 .contentType(MediaType.APPLICATION_JSON)
         )
             .andExpect(status().isNotFound)

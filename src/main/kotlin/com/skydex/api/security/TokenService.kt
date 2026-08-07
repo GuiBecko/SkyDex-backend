@@ -18,9 +18,9 @@ class TokenService (
     fun generateToken(user: User): String {
         val algorithm = Algorithm.HMAC256(secret)
         return JWT.create()
-            .withIssuer("skydex-api") // Quem emitiu o token
-            .withSubject(user.email) // A informação principal que queremos guardar (o email)
-            .withExpiresAt(generateExpirationDate()) // Tempo de validade da pulseira
+            .withIssuer("skydex-api")
+            .withSubject(user.email)
+            .withExpiresAt(generateExpirationDate())
             .sign(algorithm)
     }
 
@@ -30,11 +30,9 @@ class TokenService (
             .withIssuer("skydex-api")
             .build()
             .verify(token)
-            .subject // Devolve o email se o token for válido e não estiver expirado
+            .subject
     }
 
-    private fun generateExpirationDate(): Instant {
-        // O token expira em 2 horas. Depois disso, o app precisa logar de novo.
-        return LocalDateTime.now().plusHours(2).toInstant(ZoneOffset.of("-03:00"))
-    }
+    private fun generateExpirationDate(): Instant =
+        LocalDateTime.now().plusHours(2).toInstant(ZoneOffset.of("-03:00"))
 }

@@ -1,13 +1,15 @@
 package com.skydex.api.support
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.skydex.api.repositories.EventoRepository
 import com.skydex.api.repositories.UserRepository
+import com.skydex.api.repositories.WeatherEventRepository
+import com.skydex.api.security.TokenService
 import org.junit.jupiter.api.BeforeEach
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
+import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.web.servlet.MockMvc
 
@@ -24,14 +26,20 @@ abstract class IntegrationTestBase {
     protected lateinit var objectMapper: ObjectMapper
 
     @Autowired
-    protected lateinit var userRepository: UserRepository
+    internal lateinit var userRepository: UserRepository
 
     @Autowired
-    protected lateinit var eventoRepository: EventoRepository
+    internal lateinit var weatherEventRepository: WeatherEventRepository
+
+    @Autowired
+    internal lateinit var passwordEncoder: PasswordEncoder
+
+    @Autowired
+    internal lateinit var tokenService: TokenService
 
     @BeforeEach
     fun clearDatabase() {
-        eventoRepository.deleteAll()
+        weatherEventRepository.deleteAll()
         userRepository.deleteAll()
     }
 }

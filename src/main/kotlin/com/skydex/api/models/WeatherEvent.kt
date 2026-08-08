@@ -28,6 +28,12 @@ class WeatherEvent(
     @Column(name = "captured_at", nullable = false)
     var capturedAt: Instant = Instant.now(),
 
+    @Column(nullable = false)
+    var latitude: Double = 0.0,
+
+    @Column(nullable = false)
+    var longitude: Double = 0.0,
+
     @Column(name = "user_id", nullable = false)
     var userId: UUID
 )

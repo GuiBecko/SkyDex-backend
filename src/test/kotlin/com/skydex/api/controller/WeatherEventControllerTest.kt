@@ -18,6 +18,7 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 class WeatherEventControllerTest : IntegrationTestBase() {
@@ -37,7 +38,9 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         val request = CreateWeatherEventRequest(
             title = "Aurora Borealis",
             description = "Bright green lights in the night sky.",
-            photoUrl = "https://photo-link.com/aurora.jpg"
+            photoUrl = "https://photo-link.com/aurora.jpg",
+            latitude = -23.55,
+            longitude = -46.63
         )
 
         mockMvc.perform(
@@ -124,7 +127,9 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         val request = CreateWeatherEventRequest(
             title = "Tornado Confirmed",
             description = "Tornado touched the ground",
-            photoUrl = "url2.jpg"
+            photoUrl = "url2.jpg",
+            latitude = -23.55,
+            longitude = -46.63
         )
 
         mockMvc.perform(
@@ -173,7 +178,9 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         val payload = CreateWeatherEventRequest(
             title = "Hijacked",
             description = "Not mine",
-            photoUrl = "http://localhost:8080/api/photos/x.jpg"
+            photoUrl = "http://localhost:8080/api/photos/x.jpg",
+            latitude = -23.55,
+            longitude = -46.63
         )
 
         mockMvc.perform(
@@ -218,5 +225,85 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     fun `returns 401 when no token is supplied`() {
         mockMvc.perform(get("/api/events/mine"))
             .andExpect(status().isUnauthorized)
+    }
+
+    @Test
+    fun `stores the coordinates and stamps the capture time on the server`() {
+        val user = persistUser(email = "geo@skydex.com")
+        val before = Instant.now()
+
+        val payload = CreateWeatherEventRequest(
+            title = "Tempestade",
+            description = "Raios sobre o bairro",
+            photoUrl = "http://localhost:8080/api/photos/storm.jpg",
+            latitude = -30.0346,
+            longitude = -51.2177
+        )
+
+        val body = mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload))
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.latitude").value(-30.0346))
+            .andExpect(jsonPath("$.longitude").value(-51.2177))
+            .andExpect(jsonPath("$.authorName").value("Test Pilot"))
+            .andReturn().response.contentAsString
+
+        // The client never sends a capture time, so the only thing that can be asserted is that
+        // the server chose one, and chose it now. This is the whole anti-backdating property:
+        // if a `capturedAt` field is ever added back to the request, this test still passes but
+        // stops meaning anything — so the request DTO having no such field is what protects it.
+        val stamped = Instant.parse(objectMapper.readTree(body).get("capturedAt").asText())
+        assert(!stamped.isBefore(before.truncatedTo(ChronoUnit.MILLIS)))
+        assert(!stamped.isAfter(Instant.now()))
+    }
+
+    @Test
+    fun `rejects a latitude outside the valid range`() {
+        val user = persistUser(email = "badgeo@skydex.com")
+
+        val payload = CreateWeatherEventRequest(
+            title = "Impossible",
+            description = "Off the planet",
+            photoUrl = "http://localhost:8080/api/photos/x.jpg",
+            latitude = 120.0,
+            longitude = 0.0
+        )
+
+        mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload))
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("latitude: must be between -90 and 90"))
+    }
+
+    @Test
+    fun `ignores a capture time supplied by the client`() {
+        val user = persistUser(email = "liar@skydex.com")
+
+        // Hand-built JSON, because the DTO has no `capturedAt` field to set. A gamified app pays
+        // XP and rare badges for matching real weather, so a client that could name the hour
+        // could look up yesterday's thunderstorm and farm "Pé de Raio" without seeing a storm.
+        // Jackson ignores unknown properties by default; this pins that the value is discarded
+        // rather than honoured.
+        val backdated = """
+            {"title":"Ontem","description":"Faz de conta","photoUrl":"http://localhost:8080/api/photos/x.jpg",
+             "latitude":0.0,"longitude":0.0,"capturedAt":"2020-01-01T00:00:00Z"}
+        """.trimIndent()
+
+        mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(backdated)
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.capturedAt").value(org.hamcrest.Matchers.not("2020-01-01T00:00:00Z")))
     }
 }

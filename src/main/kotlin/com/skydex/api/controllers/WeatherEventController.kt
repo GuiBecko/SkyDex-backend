@@ -41,7 +41,10 @@ class WeatherEventController(
                 title = request.title,
                 description = request.description,
                 photoUrl = request.photoUrl,
+                // Server-stamped, never client-supplied: see this task's opening note.
                 capturedAt = Instant.now(),
+                latitude = request.latitude,
+                longitude = request.longitude,
                 userId = currentUser.id!!
             )
         )
@@ -77,6 +80,10 @@ class WeatherEventController(
         event.title = request.title
         event.description = request.description
         event.photoUrl = request.photoUrl
+        event.latitude = request.latitude
+        event.longitude = request.longitude
+        // capturedAt is deliberately NOT updated: editing a title must not move when the
+        // capture happened, or Task 12 would revalidate an old photo against a new hour.
         // Safe to pass currentUser as the author ONLY because the guard above proves
         // currentUser.id == event.userId. If that guard is ever relaxed — a moderator edit, a
         // shared album — this must go back to looking the author up from event.userId, or the

@@ -28,7 +28,9 @@ fun IntegrationTestBase.persistEvent(
     title: String = "Aurora",
     description: String = "Green lights in the night sky",
     photoUrl: String = "http://localhost:8080/api/photos/test.jpg",
-    capturedAt: Instant = Instant.now()
+    capturedAt: Instant = Instant.now(),
+    latitude: Double = -23.55,
+    longitude: Double = -46.63
 ): WeatherEvent = weatherEventRepository.save(
     WeatherEvent(
         id = null,
@@ -36,6 +38,8 @@ fun IntegrationTestBase.persistEvent(
         description = description,
         photoUrl = photoUrl,
         capturedAt = capturedAt,
+        latitude = latitude,
+        longitude = longitude,
         userId = owner.id!!
     )
 )

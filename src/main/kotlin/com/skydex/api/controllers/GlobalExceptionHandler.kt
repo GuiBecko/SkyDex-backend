@@ -4,6 +4,7 @@ import com.skydex.api.dto.ErrorResponse
 import com.skydex.api.errors.ConflictException
 import com.skydex.api.errors.ForbiddenException
 import com.skydex.api.errors.NotFoundException
+import com.skydex.api.services.BadUploadException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.MethodArgumentNotValidException
@@ -25,6 +26,10 @@ class GlobalExceptionHandler {
     @ExceptionHandler(ConflictException::class)
     fun handleConflict(e: ConflictException): ResponseEntity<ErrorResponse> =
         ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse(e.message ?: "Conflict"))
+
+    @ExceptionHandler(BadUploadException::class)
+    fun handleBadUpload(e: BadUploadException): ResponseEntity<ErrorResponse> =
+        ResponseEntity.badRequest().body(ErrorResponse(e.message ?: "Invalid upload"))
 
     @ExceptionHandler(MethodArgumentNotValidException::class)
     fun handleValidation(e: MethodArgumentNotValidException): ResponseEntity<ErrorResponse> {

@@ -46,6 +46,12 @@ class SecurityConfig(
                 auth.requestMatchers(HttpMethod.GET, "/api/photos/**").permitAll()
                 auth.anyRequest().authenticated()
             }
+            // Second layer behind PhotoStorageService's magic-byte check. Uploaded photos are
+            // attacker-supplied bytes served from the API's own origin, so anything the byte check
+            // ever misses must still be treated as the type its extension claims, never sniffed
+            // and rendered. Spring Security sends this by default; stating it keeps the guarantee
+            // from disappearing silently if the header defaults are ever customised.
+            .headers { headers -> headers.contentTypeOptions { } }
             .exceptionHandling { it.authenticationEntryPoint(authenticationEntryPoint()) }
             .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter::class.java)
 

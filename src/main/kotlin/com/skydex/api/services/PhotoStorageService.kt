@@ -1,6 +1,5 @@
 package com.skydex.api.services
 
-import com.skydex.api.errors.ConflictException
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import java.nio.file.Files
@@ -11,8 +10,7 @@ import java.util.UUID
 
 @Service
 class PhotoStorageService(
-    @Value("\${skydex.photos.directory}") private val storageDirectory: String,
-    @Value("\${skydex.photos.public-base-url}") private val publicBaseUrl: String
+    @Value("\${skydex.photos.directory}") private val storageDirectory: String
 ) {
 
     private val allowedContentTypes = setOf("image/jpeg", "image/png")
@@ -22,13 +20,18 @@ class PhotoStorageService(
     }
 
     /**
-     * Writes the bytes under a freshly generated name and returns the URL clients should use.
-     * The original filename is never reused — only its extension, and only after validation —
-     * so a caller cannot influence the path that gets written.
+     * Writes the bytes under a freshly generated name and returns the path clients should use.
+     *
+     * **Nothing from [originalFilename] is used at all** — not even its extension, which comes
+     * from the *validated* content type. The parameter is kept only to document that the client's
+     * name is deliberately ignored, which is what makes path traversal a non-issue here: the
+     * caller cannot influence the path that gets written, however the file is named.
      */
     fun store(bytes: ByteArray, originalFilename: String?, contentType: String?): String {
         if (bytes.isEmpty()) throw BadUploadException("Photo is empty")
-        val declared = contentType?.lowercase(Locale.ROOT)
+        // A content type may legitimately carry parameters (`image/jpeg; charset=UTF-8`).
+        // Comparing the raw header against the allowlist would reject those as non-images.
+        val declared = contentType?.substringBefore(';')?.trim()?.lowercase(Locale.ROOT)
         if (declared !in allowedContentTypes) {
             throw BadUploadException("Only JPEG and PNG images are accepted")
         }
@@ -50,16 +53,14 @@ class PhotoStorageService(
         val filename = "${UUID.randomUUID()}.$extension"
         Files.write(root.resolve(filename), bytes)
 
-        return "${publicBaseUrl.trimEnd('/')}/api/photos/$filename"
-    }
-
-    /**
-     * Turns a stored photo's name into an absolute path, refusing anything that escapes the
-     * storage root. Nothing produced by [store] can escape it — the name is a UUID and a validated
-     * extension — so this only bites on a name that came from somewhere else.
-     */
-    fun resolve(filename: String): Path = root.resolve(filename).normalize().also {
-        if (!it.startsWith(root)) throw ConflictException("Invalid photo path")
+        // RELATIVE, deliberately. The client hands this string back to `POST /api/events`, where it
+        // is persisted in `weather_events.photo_url` — and a row is immutable once written. Baking
+        // an absolute host in would mean a new DHCP lease, a different laptop, or any real
+        // deployment leaves every historical capture addressed to a host that no longer serves
+        // those bytes, with the JPEGs intact and unreachable on disk. Config can be re-pointed;
+        // written rows cannot. The base URL is a read-side display concern, so it is applied at
+        // the response boundary instead — see `WeatherEventResponse.withAbsolutePhotoUrl`.
+        return "/api/photos/$filename"
     }
 
     fun directory(): Path = root

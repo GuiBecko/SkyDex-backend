@@ -3,6 +3,7 @@ package com.skydex.api.controller
 import com.skydex.api.support.IntegrationTestBase
 import com.skydex.api.support.authHeaderFor
 import com.skydex.api.support.persistUser
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.http.MediaType
@@ -34,7 +35,10 @@ class PhotoControllerTest : IntegrationTestBase() {
             .andReturn().response.contentAsString
 
         val photoUrl = objectMapper.readTree(body).get("photoUrl").asText()
-        assertTrue(photoUrl.contains("/api/photos/"), "expected a /api/photos/ URL, got $photoUrl")
+        // Relative, deliberately: the client hands this exact string to POST /api/events, where it
+        // is persisted. A host baked in here would be frozen into every row forever.
+        assertTrue(photoUrl.startsWith("/api/photos/"), "expected a relative path, got $photoUrl")
+        assertFalse(photoUrl.contains("://"), "a host leaked into the upload response: $photoUrl")
         assertTrue(photoUrl.endsWith(".jpg"), "expected the extension to be preserved, got $photoUrl")
 
         // The stored file is reachable without authentication so Coil can render it.

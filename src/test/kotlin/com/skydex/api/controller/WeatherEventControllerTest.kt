@@ -7,12 +7,15 @@ import com.skydex.api.support.authHeaderFor
 import com.skydex.api.support.persistEvent
 import com.skydex.api.support.persistUser
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.http.MediaType
+import org.springframework.mock.web.MockMultipartFile
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
@@ -141,6 +144,89 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.title").value("Tornado Confirmed"))
             .andExpect(jsonPath("$.photoUrl").value("url2.jpg"))
+    }
+
+    /**
+     * The whole point of storing `photo_url` relative, pinned at both ends in one pass: upload a
+     * photo the way the app does, hand the returned string straight back to `POST /api/events`,
+     * then check that what landed in the row is host-free while what every read endpoint hands a
+     * client is fetchable.
+     *
+     * A row is immutable once written, so an absolute URL persisted here would outlive the host it
+     * names — a new DHCP lease or a real deployment and every historical capture points at bytes
+     * nobody serves. The base URL under test comes from `application-test.properties`.
+     */
+    @Test
+    fun `stores a photo url relative but returns it absolute`() {
+        val jpegBytes = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xD9.toByte())
+        val part = MockMultipartFile("file", "storm.jpg", MediaType.IMAGE_JPEG_VALUE, jpegBytes)
+
+        val uploaded = mockMvc.perform(
+            multipart("/api/photos").file(part).header("Authorization", authHeader)
+        )
+            .andExpect(status().isCreated)
+            .andReturn().response.contentAsString
+        val relativeUrl = objectMapper.readTree(uploaded).get("photoUrl").asText()
+        assertTrue(relativeUrl.startsWith("/api/photos/"), "upload returned $relativeUrl")
+
+        val request = CreateWeatherEventRequest(
+            title = "Supercell",
+            description = "Rotating wall cloud",
+            // Exactly what the upload returned — the client persists what it was given.
+            photoUrl = relativeUrl,
+            latitude = -23.55,
+            longitude = -46.63
+        )
+
+        val created = mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeader)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.photoUrl").value("http://localhost:8080$relativeUrl"))
+            .andReturn().response.contentAsString
+        val id = UUID.fromString(objectMapper.readTree(created).get("id").asText())
+
+        // The end that matters most: nothing host-specific reached the database.
+        val stored = weatherEventRepository.findById(id).orElseThrow()
+        assertEquals(relativeUrl, stored.photoUrl)
+        assertFalse(stored.photoUrl.contains("://"), "a host was persisted: ${stored.photoUrl}")
+
+        // ...and every read endpoint still hands the client something it can actually fetch.
+        mockMvc.perform(get("/api/events/{id}", id).header("Authorization", authHeader))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.photoUrl").value("http://localhost:8080$relativeUrl"))
+
+        mockMvc.perform(get("/api/events/mine").header("Authorization", authHeader))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$[0].photoUrl").value("http://localhost:8080$relativeUrl"))
+    }
+
+    /** The fourth response site. Update composes on the way out and still persists relative. */
+    @Test
+    fun `update returns an absolute photo url while persisting the relative one`() {
+        val event = persistEvent(owner = testUser, title = "Old", description = "Old", photoUrl = "/api/photos/old.jpg")
+
+        val request = CreateWeatherEventRequest(
+            title = "New",
+            description = "New description",
+            photoUrl = "/api/photos/new.jpg",
+            latitude = -23.55,
+            longitude = -46.63
+        )
+
+        mockMvc.perform(
+            put("/api/events/{id}", event.id!!)
+                .header("Authorization", authHeader)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.photoUrl").value("http://localhost:8080/api/photos/new.jpg"))
+
+        assertEquals("/api/photos/new.jpg", weatherEventRepository.findById(event.id!!).orElseThrow().photoUrl)
     }
 
     @Test

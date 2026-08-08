@@ -52,3 +52,18 @@ data class WeatherEventResponse(
         )
     }
 }
+
+/**
+ * Turns the stored relative `photoUrl` into something a client can actually fetch.
+ *
+ * Applied at the controller boundary rather than inside [WeatherEventResponse.Companion.from], so
+ * the base URL never reaches the persistence path — what gets written to `weather_events.photo_url`
+ * stays host-independent, and a row (which is immutable) can never go stale because the server
+ * moved. If this is ever forgotten on a new endpoint the failure is loud and local — the image
+ * simply does not render — rather than a row written with a host that will be wrong forever.
+ *
+ * The `startsWith("/")` guard makes it idempotent and leaves any already-absolute value alone,
+ * which matters for the externally-hosted URLs captures could carry before uploads existed.
+ */
+fun WeatherEventResponse.withAbsolutePhotoUrl(baseUrl: String): WeatherEventResponse =
+    if (photoUrl.startsWith("/")) copy(photoUrl = baseUrl.trimEnd('/') + photoUrl) else this

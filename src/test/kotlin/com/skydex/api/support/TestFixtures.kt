@@ -27,7 +27,12 @@ fun IntegrationTestBase.persistEvent(
     owner: User,
     title: String = "Aurora",
     description: String = "Green lights in the night sky",
-    photoUrl: String = "http://localhost:8080/api/photos/test.jpg",
+    // Relative, like everything `POST /api/photos` issues and the only shape `POST /api/events`
+    // now accepts. This helper writes straight to the repository and so bypasses validation
+    // entirely — which is exactly why the default has to be kept honest by hand: a fixture that
+    // no longer resembles a real row would let a read-path test pass on data the API could never
+    // have produced.
+    photoUrl: String = "/api/photos/test.jpg",
     capturedAt: Instant = Instant.now(),
     latitude: Double = -23.55,
     longitude: Double = -46.63

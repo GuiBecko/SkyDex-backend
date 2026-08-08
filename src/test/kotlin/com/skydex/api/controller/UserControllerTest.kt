@@ -49,7 +49,7 @@ class UserControllerTest : IntegrationTestBase() {
     @Test
     fun `deletes the authenticated user and returns 204 No Content`() {
         val user = persistUser(name = "User to delete", email = "delete@test.com")
-        persistEvent(owner = user, title = "Orphan risk", description = "Should go with the user", photoUrl = "http://photo.jpg")
+        persistEvent(owner = user, title = "Orphan risk", description = "Should go with the user", photoUrl = "/api/photos/orphan.jpg")
 
         mockMvc.perform(
             delete("/api/users/me")

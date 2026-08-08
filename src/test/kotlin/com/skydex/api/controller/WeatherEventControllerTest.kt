@@ -41,7 +41,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         val request = CreateWeatherEventRequest(
             title = "Aurora Borealis",
             description = "Bright green lights in the night sky.",
-            photoUrl = "https://photo-link.com/aurora.jpg",
+            photoUrl = "/api/photos/aurora.jpg",
             latitude = -23.55,
             longitude = -46.63
         )
@@ -65,20 +65,20 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             owner = testUser,
             title = "Aurora Borealis",
             description = "lights",
-            photoUrl = "http://photo1.jpg",
+            photoUrl = "/api/photos/photo1.jpg",
             capturedAt = now.minusSeconds(3600)
         )
         persistEvent(
             owner = testUser,
             title = "Eclipse",
             description = "lunar eclipse",
-            photoUrl = "http://photo2.jpg",
+            photoUrl = "/api/photos/photo2.jpg",
             capturedAt = now
         )
 
         // Another user's event must never leak into this user's "mine" listing.
         val otherUser = persistUser(name = "Other Pilot", email = "other@skydex.com")
-        persistEvent(owner = otherUser, title = "Hail", description = "not mine", photoUrl = "http://other.jpg")
+        persistEvent(owner = otherUser, title = "Hail", description = "not mine", photoUrl = "/api/photos/other.jpg")
 
         mockMvc.perform(
             get("/api/events/mine")
@@ -95,7 +95,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
 
     @Test
     fun `finds an event by id and returns 200`() {
-        val event = persistEvent(owner = testUser, title = "Aurora Borealis", description = "lights", photoUrl = "http://photo1.jpg")
+        val event = persistEvent(owner = testUser, title = "Aurora Borealis", description = "lights", photoUrl = "/api/photos/photo1.jpg")
 
         mockMvc.perform(
             get("/api/events/{id}", event.id!!)
@@ -125,12 +125,12 @@ class WeatherEventControllerTest : IntegrationTestBase() {
 
     @Test
     fun `updates an existing event and returns 200`() {
-        val event = persistEvent(owner = testUser, title = "Old Title", description = "Old description", photoUrl = "url1.jpg")
+        val event = persistEvent(owner = testUser, title = "Old Title", description = "Old description", photoUrl = "/api/photos/url1.jpg")
 
         val request = CreateWeatherEventRequest(
             title = "Tornado Confirmed",
             description = "Tornado touched the ground",
-            photoUrl = "url2.jpg",
+            photoUrl = "/api/photos/url2.jpg",
             latitude = -23.55,
             longitude = -46.63
         )
@@ -143,7 +143,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         )
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.title").value("Tornado Confirmed"))
-            .andExpect(jsonPath("$.photoUrl").value("url2.jpg"))
+            .andExpect(jsonPath("$.photoUrl").value("http://localhost:8080/api/photos/url2.jpg"))
     }
 
     /**
@@ -231,7 +231,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
 
     @Test
     fun `deletes an existing event and returns 204 No Content`() {
-        val event = persistEvent(owner = testUser, title = "Event to delete", description = "...", photoUrl = "url.jpg")
+        val event = persistEvent(owner = testUser, title = "Event to delete", description = "...", photoUrl = "/api/photos/url.jpg")
 
         mockMvc.perform(
             delete("/api/events/{id}", event.id!!)
@@ -264,7 +264,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         val payload = CreateWeatherEventRequest(
             title = "Hijacked",
             description = "Not mine",
-            photoUrl = "http://localhost:8080/api/photos/x.jpg",
+            photoUrl = "/api/photos/x.jpg",
             latitude = -23.55,
             longitude = -46.63
         )
@@ -321,7 +321,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         val payload = CreateWeatherEventRequest(
             title = "Tempestade",
             description = "Raios sobre o bairro",
-            photoUrl = "http://localhost:8080/api/photos/storm.jpg",
+            photoUrl = "/api/photos/storm.jpg",
             latitude = -30.0346,
             longitude = -51.2177
         )
@@ -354,7 +354,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         val payload = CreateWeatherEventRequest(
             title = "Impossible",
             description = "Off the planet",
-            photoUrl = "http://localhost:8080/api/photos/x.jpg",
+            photoUrl = "/api/photos/x.jpg",
             latitude = 120.0,
             longitude = 0.0
         )
@@ -380,7 +380,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         val payload = CreateWeatherEventRequest(
             title = "Editado",
             description = "So o texto mudou",
-            photoUrl = "http://localhost:8080/api/photos/x.jpg",
+            photoUrl = "/api/photos/x.jpg",
             latitude = 35.6762,
             longitude = 139.6503
         )
@@ -409,7 +409,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         val payload = CreateWeatherEventRequest(
             title = "Deserto",
             description = "Ceu limpo a perder de vista",
-            photoUrl = "http://localhost:8080/api/photos/x.jpg",
+            photoUrl = "/api/photos/x.jpg",
             latitude = -25.0,
             longitude = 120.0
         )
@@ -431,7 +431,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         val payload = CreateWeatherEventRequest(
             title = "Impossible",
             description = "Off the planet",
-            photoUrl = "http://localhost:8080/api/photos/x.jpg",
+            photoUrl = "/api/photos/x.jpg",
             latitude = 0.0,
             longitude = 200.0
         )
@@ -447,6 +447,54 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     }
 
     @Test
+    fun `rejects a photo url pointing at a foreign host`() {
+        val user = persistUser(email = "pixel@skydex.com")
+
+        // This app shows one user's captures to their friends, so photoUrl is not merely the
+        // author's own business: every friend who opens the feed fetches whatever it names. An
+        // unconstrained string is a tracking pixel any user can plant in everyone else's client.
+        val payload = CreateWeatherEventRequest(
+            title = "Parece uma foto",
+            description = "Mas nao esta no nosso servidor",
+            photoUrl = "http://attacker.example/pixel.jpg",
+            latitude = 0.0,
+            longitude = 0.0
+        )
+
+        mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload))
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("photoUrl: Photo URL must be a path returned by POST /api/photos"))
+    }
+
+    @Test
+    fun `rejects a photo url that escapes the photos path`() {
+        val user = persistUser(email = "traversal@skydex.com")
+
+        // Same origin, wrong endpoint. Excluding `/` from the filename is what stops this, and it
+        // is the half that a "must start with /api/photos" check would miss.
+        val payload = CreateWeatherEventRequest(
+            title = "Ainda parece",
+            description = "Mas sobe um nivel",
+            photoUrl = "/api/photos/../../api/users/me",
+            latitude = 0.0,
+            longitude = 0.0
+        )
+
+        mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload))
+        )
+            .andExpect(status().isBadRequest)
+    }
+
+    @Test
     fun `ignores a capture time supplied by the client`() {
         val user = persistUser(email = "liar@skydex.com")
 
@@ -456,7 +504,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         // Jackson ignores unknown properties by default; this pins that the value is discarded
         // rather than honoured.
         val backdated = """
-            {"title":"Ontem","description":"Faz de conta","photoUrl":"http://localhost:8080/api/photos/x.jpg",
+            {"title":"Ontem","description":"Faz de conta","photoUrl":"/api/photos/x.jpg",
              "latitude":0.0,"longitude":0.0,"capturedAt":"2020-01-01T00:00:00Z"}
         """.trimIndent()
 

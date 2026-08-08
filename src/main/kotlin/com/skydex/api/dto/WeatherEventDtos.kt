@@ -5,6 +5,7 @@ import com.skydex.api.models.WeatherEvent
 import jakarta.validation.constraints.DecimalMax
 import jakarta.validation.constraints.DecimalMin
 import jakarta.validation.constraints.NotBlank
+import jakarta.validation.constraints.Pattern
 import java.time.Instant
 import java.util.UUID
 
@@ -15,7 +16,16 @@ data class CreateWeatherEventRequest(
     @field:NotBlank(message = "Description is required")
     val description: String,
 
-    @field:NotBlank(message = "Photo URL is required")
+    // Constrained to a path this server itself issued, not merely non-blank. `photoUrl` is
+    // client-supplied, persisted verbatim, and then rendered by every friend who opens the feed —
+    // so an unconstrained string lets any user plant `http://attacker.example/pixel.jpg` and
+    // collect the IP and view time of everyone who scrolls past it. Requiring a relative
+    // /api/photos/ path makes a foreign host unrepresentable rather than merely discouraged, and
+    // excluding `/` from the filename blocks traversal into other endpoints on our own origin.
+    @field:Pattern(
+        regexp = "^/api/photos/[A-Za-z0-9._-]+\\.(jpg|png)$",
+        message = "Photo URL must be a path returned by POST /api/photos"
+    )
     val photoUrl: String,
 
     @field:DecimalMin(value = "-90.0", message = "must be between -90 and 90")

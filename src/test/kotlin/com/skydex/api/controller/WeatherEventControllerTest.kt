@@ -312,6 +312,33 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     }
 
     @Test
+    fun `accepts a longitude that is only valid on the longitude scale`() {
+        val user = persistUser(email = "meridian@skydex.com")
+
+        // 120 deg E is a real place (western Australia) and the ONLY value that catches the bug
+        // this pair of tests exists for: latitude's bounds copy-pasted onto longitude. A rejection
+        // test cannot catch it — 200 is outside both +-90 and +-180, and the message string is a
+        // literal rather than something derived from the annotation, so it reads "-180 and 180"
+        // either way. Acceptance is what discriminates.
+        val payload = CreateWeatherEventRequest(
+            title = "Deserto",
+            description = "Ceu limpo a perder de vista",
+            photoUrl = "http://localhost:8080/api/photos/x.jpg",
+            latitude = -25.0,
+            longitude = 120.0
+        )
+
+        mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload))
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.longitude").value(120.0))
+    }
+
+    @Test
     fun `rejects a longitude outside the valid range`() {
         val user = persistUser(email = "offmap@skydex.com")
 

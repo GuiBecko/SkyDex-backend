@@ -257,8 +257,8 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         // if a `capturedAt` field is ever added back to the request, this test still passes but
         // stops meaning anything — so the request DTO having no such field is what protects it.
         val stamped = Instant.parse(objectMapper.readTree(body).get("capturedAt").asText())
-        assert(!stamped.isBefore(before.truncatedTo(ChronoUnit.MILLIS)))
-        assert(!stamped.isAfter(Instant.now()))
+        assertTrue(!stamped.isBefore(before.truncatedTo(ChronoUnit.MILLIS)))
+        assertTrue(!stamped.isAfter(Instant.now()))
     }
 
     @Test
@@ -281,6 +281,56 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         )
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("latitude: must be between -90 and 90"))
+    }
+
+    @Test
+    fun `ignores coordinates supplied on update`() {
+        val user = persistUser(email = "pinmover@skydex.com")
+        val event = persistEvent(owner = user, latitude = -30.0346, longitude = -51.2177)
+
+        // The mirror image of backdating. Task 12 scores a capture against the weather at an
+        // instant AND a place, so a movable pin is a movable verdict: create now, look up where a
+        // storm is happening at this frozen instant, PUT the coordinates there, collect the badge.
+        val payload = CreateWeatherEventRequest(
+            title = "Editado",
+            description = "So o texto mudou",
+            photoUrl = "http://localhost:8080/api/photos/x.jpg",
+            latitude = 35.6762,
+            longitude = 139.6503
+        )
+
+        mockMvc.perform(
+            put("/api/events/{id}", event.id!!)
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload))
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.title").value("Editado"))
+            .andExpect(jsonPath("$.latitude").value(-30.0346))
+            .andExpect(jsonPath("$.longitude").value(-51.2177))
+    }
+
+    @Test
+    fun `rejects a longitude outside the valid range`() {
+        val user = persistUser(email = "offmap@skydex.com")
+
+        val payload = CreateWeatherEventRequest(
+            title = "Impossible",
+            description = "Off the planet",
+            photoUrl = "http://localhost:8080/api/photos/x.jpg",
+            latitude = 0.0,
+            longitude = 200.0
+        )
+
+        mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload))
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("longitude: must be between -180 and 180"))
     }
 
     @Test

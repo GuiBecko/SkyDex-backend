@@ -80,10 +80,15 @@ class WeatherEventController(
         event.title = request.title
         event.description = request.description
         event.photoUrl = request.photoUrl
-        event.latitude = request.latitude
-        event.longitude = request.longitude
-        // capturedAt is deliberately NOT updated: editing a title must not move when the
-        // capture happened, or Task 12 would revalidate an old photo against a new hour.
+        // Neither capturedAt NOR the coordinates are updated here, and for one reason: Task 12
+        // scores a capture against the real weather at an instant AND a place. Freezing the time
+        // while leaving the pin editable just moves the cheat one axis over — create a capture
+        // now, find where a storm is happening at that frozen instant, PUT the coordinates there,
+        // collect the rare badge. Nothing legitimate is lost: the coordinates are client-supplied
+        // at creation because the server cannot see the phone, and letting them move afterwards
+        // only buys a second, better-informed attempt.
+        // `CreateWeatherEventRequest` still carries latitude/longitude, and this handler silently
+        // ignores them — the same shape as capturedAt, and pinned by the test below.
         // Safe to pass currentUser as the author ONLY because the guard above proves
         // currentUser.id == event.userId. If that guard is ever relaxed — a moderator edit, a
         // shared album — this must go back to looking the author up from event.userId, or the

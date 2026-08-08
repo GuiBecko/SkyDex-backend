@@ -58,8 +58,9 @@ class PhotoStorageService(
         // an absolute host in would mean a new DHCP lease, a different laptop, or any real
         // deployment leaves every historical capture addressed to a host that no longer serves
         // those bytes, with the JPEGs intact and unreachable on disk. Config can be re-pointed;
-        // written rows cannot. The base URL is a read-side display concern, so it is applied at
-        // the response boundary instead — see `WeatherEventResponse.withAbsolutePhotoUrl`.
+        // written rows cannot. The base URL is a display concern, so it is applied at the
+        // read path instead: `WeatherEventResponse.from` takes a baseUrl parameter and composes
+        // the absolute URL when serialising. See the note on that method.
         return "/api/photos/$filename"
     }
 

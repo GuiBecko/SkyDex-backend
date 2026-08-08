@@ -2,7 +2,6 @@ package com.skydex.api.controllers
 
 import com.skydex.api.dto.CreateWeatherEventRequest
 import com.skydex.api.dto.WeatherEventResponse
-import com.skydex.api.dto.withAbsolutePhotoUrl
 import com.skydex.api.errors.ForbiddenException
 import com.skydex.api.errors.NotFoundException
 import com.skydex.api.models.User
@@ -31,8 +30,8 @@ class WeatherEventController(
     private val events: WeatherEventRepository,
     private val users: UserRepository,
     // Read-side only. `photo_url` is persisted relative so a stored row never carries a host that
-    // can go stale; every response leaving this controller composes the absolute URL on the way
-    // out via `withAbsolutePhotoUrl`. Any handler added here must do the same.
+    // can go stale; the absolute URL is composed on the way out by `WeatherEventResponse.from`,
+    // which takes this as a required third argument. Nothing on the write path may use it.
     @Value("\${skydex.photos.public-base-url}") private val publicBaseUrl: String
 ) {
 
@@ -55,14 +54,14 @@ class WeatherEventController(
             )
         )
         return ResponseEntity.status(HttpStatus.CREATED)
-            .body(WeatherEventResponse.from(saved, currentUser).withAbsolutePhotoUrl(publicBaseUrl))
+            .body(WeatherEventResponse.from(saved, currentUser, publicBaseUrl))
     }
 
     @GetMapping("/mine")
     fun listMine(@AuthenticationPrincipal currentUser: User): ResponseEntity<List<WeatherEventResponse>> {
         val mine = events.findByUserIdOrderByCapturedAtDesc(currentUser.id!!)
         return ResponseEntity.ok(
-            mine.map { WeatherEventResponse.from(it, currentUser).withAbsolutePhotoUrl(publicBaseUrl) }
+            mine.map { WeatherEventResponse.from(it, currentUser, publicBaseUrl) }
         )
     }
 
@@ -72,7 +71,7 @@ class WeatherEventController(
         // Author comes from the event, never from the caller: this endpoint has no ownership
         // restriction, so the two genuinely differ here. The test below pins that.
         val author = users.findById(event.userId).orElseThrow { NotFoundException("Capture not found") }
-        return WeatherEventResponse.from(event, author).withAbsolutePhotoUrl(publicBaseUrl)
+        return WeatherEventResponse.from(event, author, publicBaseUrl)
     }
 
     @PutMapping("/{id}")
@@ -101,7 +100,7 @@ class WeatherEventController(
         // currentUser.id == event.userId. If that guard is ever relaxed — a moderator edit, a
         // shared album — this must go back to looking the author up from event.userId, or the
         // response will attribute the capture to whoever edited it.
-        return WeatherEventResponse.from(events.save(event), currentUser).withAbsolutePhotoUrl(publicBaseUrl)
+        return WeatherEventResponse.from(events.save(event), currentUser, publicBaseUrl)
     }
 
     @DeleteMapping("/{id}")

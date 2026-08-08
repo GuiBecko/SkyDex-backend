@@ -39,11 +39,32 @@ data class WeatherEventResponse(
     val authorName: String
 ) {
     companion object {
-        fun from(event: WeatherEvent, author: User) = WeatherEventResponse(
+        /**
+         * [baseUrl] is required, not optional, and that is the whole point.
+         *
+         * `weather_events.photo_url` is persisted **relative** so a stored row never carries a host
+         * that can go stale — a new DHCP lease or a real deployment would otherwise leave every
+         * historical capture pointing at an address that no longer serves those bytes. Composing
+         * the host is therefore a read-side concern, and this is the single place it happens.
+         *
+         * An earlier revision applied it at the controller boundary via a `withAbsolutePhotoUrl`
+         * extension — since removed, so do not go looking for it. That design cannot cover every
+         * caller: a service that builds finished responses itself (the feed) has no mapping step
+         * in its controller to hang the extension on, and forgetting it produced a silently
+         * relative URL that renders as a broken image. As a required parameter, forgetting it is
+         * a compile error instead — and no caller pays extra, since a response has no access to
+         * configuration either way.
+         *
+         * The `startsWith("/")` guard keeps this idempotent and leaves an already-absolute value
+         * alone, which matters for the externally-hosted URLs captures could carry before uploads
+         * existed.
+         */
+        fun from(event: WeatherEvent, author: User, baseUrl: String) = WeatherEventResponse(
             id = event.id!!,
             title = event.title,
             description = event.description,
-            photoUrl = event.photoUrl,
+            photoUrl = if (event.photoUrl.startsWith("/")) baseUrl.trimEnd('/') + event.photoUrl
+                       else event.photoUrl,
             capturedAt = event.capturedAt,
             latitude = event.latitude,
             longitude = event.longitude,
@@ -52,18 +73,3 @@ data class WeatherEventResponse(
         )
     }
 }
-
-/**
- * Turns the stored relative `photoUrl` into something a client can actually fetch.
- *
- * Applied at the controller boundary rather than inside [WeatherEventResponse.Companion.from], so
- * the base URL never reaches the persistence path — what gets written to `weather_events.photo_url`
- * stays host-independent, and a row (which is immutable) can never go stale because the server
- * moved. If this is ever forgotten on a new endpoint the failure is loud and local — the image
- * simply does not render — rather than a row written with a host that will be wrong forever.
- *
- * The `startsWith("/")` guard makes it idempotent and leaves any already-absolute value alone,
- * which matters for the externally-hosted URLs captures could carry before uploads existed.
- */
-fun WeatherEventResponse.withAbsolutePhotoUrl(baseUrl: String): WeatherEventResponse =
-    if (photoUrl.startsWith("/")) copy(photoUrl = baseUrl.trimEnd('/') + photoUrl) else this

@@ -34,7 +34,10 @@ data class CreateWeatherEventRequest(
 
     @field:DecimalMin(value = "-180.0", message = "must be between -180 and 180")
     @field:DecimalMax(value = "180.0", message = "must be between -180 and 180")
-    val longitude: Double
+    val longitude: Double,
+
+    @field:NotBlank(message = "Phenomenon is required")
+    val phenomenon: String
 )
 
 data class WeatherEventResponse(
@@ -46,7 +49,10 @@ data class WeatherEventResponse(
     val latitude: Double,
     val longitude: Double,
     val userId: UUID,
-    val authorName: String
+    val authorName: String,
+    val phenomenon: String,
+    val validationStatus: String,
+    val xpAwarded: Int
 ) {
     companion object {
         /**
@@ -79,7 +85,10 @@ data class WeatherEventResponse(
             latitude = event.latitude,
             longitude = event.longitude,
             userId = event.userId,
-            authorName = author.name
+            authorName = author.name,
+            phenomenon = event.phenomenon.name,
+            validationStatus = event.validationStatus.name,
+            xpAwarded = event.xpAwarded
         )
     }
 }

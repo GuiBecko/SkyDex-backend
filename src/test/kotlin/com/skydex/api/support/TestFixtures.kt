@@ -1,5 +1,7 @@
 package com.skydex.api.support
 
+import com.skydex.api.domain.Phenomenon
+import com.skydex.api.domain.ValidationStatus
 import com.skydex.api.models.User
 import com.skydex.api.models.WeatherEvent
 import java.time.Instant
@@ -35,7 +37,10 @@ fun IntegrationTestBase.persistEvent(
     photoUrl: String = "/api/photos/test.jpg",
     capturedAt: Instant = Instant.now(),
     latitude: Double = -23.55,
-    longitude: Double = -46.63
+    longitude: Double = -46.63,
+    phenomenon: Phenomenon = Phenomenon.RAIN,
+    validationStatus: ValidationStatus = ValidationStatus.CONFIRMED,
+    xpAwarded: Int = Phenomenon.RAIN.rarity.xp
 ): WeatherEvent = weatherEventRepository.save(
     WeatherEvent(
         id = null,
@@ -45,6 +50,10 @@ fun IntegrationTestBase.persistEvent(
         capturedAt = capturedAt,
         latitude = latitude,
         longitude = longitude,
+        phenomenon = phenomenon,
+        validationStatus = validationStatus,
+        observedWeatherCode = phenomenon.weatherCodes.first(),
+        xpAwarded = xpAwarded,
         userId = owner.id!!
     )
 )

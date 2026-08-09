@@ -50,4 +50,16 @@ class PhenomenonTest {
             assert(it.weatherCodes.isNotEmpty()) { "$it has no weather codes" }
         }
     }
+
+    @Test
+    fun `looks up a phenomenon by name regardless of case`() {
+        assertEquals(Phenomenon.THUNDERSTORM, Phenomenon.fromNameOrNull("THUNDERSTORM"))
+        assertEquals(Phenomenon.THUNDERSTORM, Phenomenon.fromNameOrNull("thunderstorm"))
+        assertEquals(Phenomenon.THUNDERSTORM, Phenomenon.fromNameOrNull("ThunderStorm"))
+    }
+
+    @Test
+    fun `returns null for a name that is not in the catalog`() {
+        assertNull(Phenomenon.fromNameOrNull("FROG_RAIN"))
+    }
 }

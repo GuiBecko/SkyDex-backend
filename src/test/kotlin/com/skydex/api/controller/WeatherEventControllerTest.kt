@@ -1,7 +1,11 @@
 package com.skydex.api.controller
 
+import com.skydex.api.domain.ValidationStatus
 import com.skydex.api.dto.CreateWeatherEventRequest
+import com.skydex.api.dto.HourlyData
+import com.skydex.api.dto.OpenMeteoResponse
 import com.skydex.api.models.User
+import com.skydex.api.services.OpenMeteoClient
 import com.skydex.api.support.IntegrationTestBase
 import com.skydex.api.support.authHeaderFor
 import com.skydex.api.support.persistEvent
@@ -11,6 +15,8 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito.`when`
+import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.http.MediaType
 import org.springframework.mock.web.MockMultipartFile
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
@@ -21,10 +27,15 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 class WeatherEventControllerTest : IntegrationTestBase() {
+
+    @MockBean
+    private lateinit var openMeteoClient: OpenMeteoClient
 
     private lateinit var testUser: User
     private lateinit var authHeader: String
@@ -43,7 +54,8 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             description = "Bright green lights in the night sky.",
             photoUrl = "/api/photos/aurora.jpg",
             latitude = -23.55,
-            longitude = -46.63
+            longitude = -46.63,
+            phenomenon = "RAIN"
         )
 
         mockMvc.perform(
@@ -132,7 +144,8 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             description = "Tornado touched the ground",
             photoUrl = "/api/photos/url2.jpg",
             latitude = -23.55,
-            longitude = -46.63
+            longitude = -46.63,
+            phenomenon = "RAIN"
         )
 
         mockMvc.perform(
@@ -175,7 +188,8 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             // Exactly what the upload returned — the client persists what it was given.
             photoUrl = relativeUrl,
             latitude = -23.55,
-            longitude = -46.63
+            longitude = -46.63,
+            phenomenon = "RAIN"
         )
 
         val created = mockMvc.perform(
@@ -214,7 +228,8 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             description = "New description",
             photoUrl = "/api/photos/new.jpg",
             latitude = -23.55,
-            longitude = -46.63
+            longitude = -46.63,
+            phenomenon = "RAIN"
         )
 
         mockMvc.perform(
@@ -266,7 +281,8 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             description = "Not mine",
             photoUrl = "/api/photos/x.jpg",
             latitude = -23.55,
-            longitude = -46.63
+            longitude = -46.63,
+            phenomenon = "RAIN"
         )
 
         mockMvc.perform(
@@ -323,7 +339,8 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             description = "Raios sobre o bairro",
             photoUrl = "/api/photos/storm.jpg",
             latitude = -30.0346,
-            longitude = -51.2177
+            longitude = -51.2177,
+            phenomenon = "RAIN"
         )
 
         val body = mockMvc.perform(
@@ -356,7 +373,8 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             description = "Off the planet",
             photoUrl = "/api/photos/x.jpg",
             latitude = 120.0,
-            longitude = 0.0
+            longitude = 0.0,
+            phenomenon = "RAIN"
         )
 
         mockMvc.perform(
@@ -382,7 +400,8 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             description = "So o texto mudou",
             photoUrl = "/api/photos/x.jpg",
             latitude = 35.6762,
-            longitude = 139.6503
+            longitude = 139.6503,
+            phenomenon = "RAIN"
         )
 
         mockMvc.perform(
@@ -411,7 +430,8 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             description = "Ceu limpo a perder de vista",
             photoUrl = "/api/photos/x.jpg",
             latitude = -25.0,
-            longitude = 120.0
+            longitude = 120.0,
+            phenomenon = "RAIN"
         )
 
         mockMvc.perform(
@@ -433,7 +453,8 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             description = "Off the planet",
             photoUrl = "/api/photos/x.jpg",
             latitude = 0.0,
-            longitude = 200.0
+            longitude = 200.0,
+            phenomenon = "RAIN"
         )
 
         mockMvc.perform(
@@ -458,7 +479,8 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             description = "Mas nao esta no nosso servidor",
             photoUrl = "http://attacker.example/pixel.jpg",
             latitude = 0.0,
-            longitude = 0.0
+            longitude = 0.0,
+            phenomenon = "RAIN"
         )
 
         mockMvc.perform(
@@ -482,7 +504,8 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             description = "Mas sobe um nivel",
             photoUrl = "/api/photos/../../api/users/me",
             latitude = 0.0,
-            longitude = 0.0
+            longitude = 0.0,
+            phenomenon = "RAIN"
         )
 
         mockMvc.perform(
@@ -505,7 +528,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         // rather than honoured.
         val backdated = """
             {"title":"Ontem","description":"Faz de conta","photoUrl":"/api/photos/x.jpg",
-             "latitude":0.0,"longitude":0.0,"capturedAt":"2020-01-01T00:00:00Z"}
+             "latitude":0.0,"longitude":0.0,"capturedAt":"2020-01-01T00:00:00Z","phenomenon":"RAIN"}
         """.trimIndent()
 
         mockMvc.perform(
@@ -516,5 +539,162 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         )
             .andExpect(status().isCreated)
             .andExpect(jsonPath("$.capturedAt").value(org.hamcrest.Matchers.not("2020-01-01T00:00:00Z")))
+    }
+
+    /**
+     * Open-Meteo's label for the hour the server is in right now, e.g. "2026-08-07T14:00".
+     *
+     * The capture time is stamped server-side with `Instant.now()` (Task 6), so a forecast slot
+     * hard-coded to a fixed date would drift out of `MAX_SKEW` and every one of these tests would
+     * start failing on a wall clock the author never ran. Deriving the slot from the same clock
+     * the server reads keeps them honest instead of merely green.
+     */
+    private fun currentSlotLabel(): String =
+        LocalDateTime.ofInstant(Instant.now().truncatedTo(ChronoUnit.HOURS), ZoneOffset.UTC).toString()
+
+    @Test
+    fun `confirms a capture whose claim matches the observed weather and awards xp`() {
+        val user = persistUser(email = "hunter@skydex.com")
+
+        `when`(openMeteoClient.fetchHourlyForecast(-30.0346, -51.2177)).thenReturn(
+            OpenMeteoResponse(
+                latitude = -30.0346,
+                longitude = -51.2177,
+                hourly = HourlyData(
+                    time = listOf(currentSlotLabel()),
+                    temperatureCelsius = listOf(19.0),
+                    weatherCode = listOf(95)
+                )
+            )
+        )
+
+        val payload = CreateWeatherEventRequest(
+            title = "Tempestade",
+            description = "Raios sobre o bairro",
+            photoUrl = "/api/photos/storm.jpg",
+            latitude = -30.0346,
+            longitude = -51.2177,
+            phenomenon = "THUNDERSTORM"
+        )
+
+        mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload))
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.phenomenon").value("THUNDERSTORM"))
+            .andExpect(jsonPath("$.validationStatus").value("CONFIRMED"))
+            .andExpect(jsonPath("$.xpAwarded").value(60))
+    }
+
+    @Test
+    fun `saves the capture but awards no xp when the claim is contradicted`() {
+        val user = persistUser(email = "optimist@skydex.com")
+
+        `when`(openMeteoClient.fetchHourlyForecast(-30.0346, -51.2177)).thenReturn(
+            OpenMeteoResponse(
+                latitude = -30.0346,
+                longitude = -51.2177,
+                hourly = HourlyData(
+                    time = listOf(currentSlotLabel()),
+                    temperatureCelsius = listOf(28.0),
+                    weatherCode = listOf(0)
+                )
+            )
+        )
+
+        val payload = CreateWeatherEventRequest(
+            title = "Granizo (eu juro)",
+            description = "Pedras do tamanho de bolas de golfe",
+            photoUrl = "/api/photos/hail.jpg",
+            latitude = -30.0346,
+            longitude = -51.2177,
+            phenomenon = "HAILSTORM"
+        )
+
+        mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload))
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.validationStatus").value("UNCONFIRMED"))
+            .andExpect(jsonPath("$.xpAwarded").value(0))
+    }
+
+    @Test
+    fun `rejects a phenomenon that is not in the catalog`() {
+        val user = persistUser(email = "inventor@skydex.com")
+
+        val payload = CreateWeatherEventRequest(
+            title = "Chuva de sapos",
+            description = "Aconteceu mesmo",
+            photoUrl = "/api/photos/frogs.jpg",
+            latitude = -30.0346,
+            longitude = -51.2177,
+            phenomenon = "FROG_RAIN"
+        )
+
+        mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload))
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("Unknown phenomenon: FROG_RAIN"))
+    }
+
+    @Test
+    fun `editing a capture does not re-roll its validation or xp`() {
+        val user = persistUser(email = "rerooler@skydex.com")
+        // UNCONFIRMED / 0 XP passed EXPLICITLY. `persistEvent` defaults to CONFIRMED with RAIN's
+        // 10 XP (Step 11), which would both contradict the assertions below and destroy the
+        // point of the test: starting from CONFIRMED, a handler that re-validated would leave it
+        // CONFIRMED and the test would pass while proving nothing.
+        val event = persistEvent(
+            owner = user,
+            latitude = -30.0346,
+            longitude = -51.2177,
+            validationStatus = ValidationStatus.UNCONFIRMED,
+            xpAwarded = 0
+        )
+
+        // The capture is stored UNCONFIRMED with 0 XP. Make the forecast agree
+        // now, so a handler that re-validated on edit would flip it to CONFIRMED and pay out.
+        `when`(openMeteoClient.fetchHourlyForecast(-30.0346, -51.2177)).thenReturn(
+            OpenMeteoResponse(
+                latitude = -30.0346,
+                longitude = -51.2177,
+                hourly = HourlyData(
+                    time = listOf(currentSlotLabel()),
+                    temperatureCelsius = listOf(19.0),
+                    weatherCode = listOf(95)
+                )
+            )
+        )
+
+        val payload = CreateWeatherEventRequest(
+            title = "Titulo novo",
+            description = "So o texto mudou",
+            photoUrl = "/api/photos/x.jpg",
+            latitude = -30.0346,
+            longitude = -51.2177,
+            phenomenon = "THUNDERSTORM"
+        )
+
+        mockMvc.perform(
+            put("/api/events/{id}", event.id!!)
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload))
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.title").value("Titulo novo"))
+            .andExpect(jsonPath("$.validationStatus").value("UNCONFIRMED"))
+            .andExpect(jsonPath("$.xpAwarded").value(0))
     }
 }

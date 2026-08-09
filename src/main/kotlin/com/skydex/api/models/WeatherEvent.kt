@@ -1,7 +1,11 @@
 package com.skydex.api.models
 
+import com.skydex.api.domain.Phenomenon
+import com.skydex.api.domain.ValidationStatus
 import jakarta.persistence.Column
 import jakarta.persistence.Entity
+import jakarta.persistence.EnumType
+import jakarta.persistence.Enumerated
 import jakarta.persistence.GeneratedValue
 import jakarta.persistence.GenerationType
 import jakarta.persistence.Id
@@ -33,6 +37,20 @@ class WeatherEvent(
 
     @Column(nullable = false)
     var longitude: Double = 0.0,
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 32)
+    var phenomenon: Phenomenon = Phenomenon.CLOUDS,
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "validation_status", nullable = false, length = 16)
+    var validationStatus: ValidationStatus = ValidationStatus.UNCONFIRMED,
+
+    @Column(name = "observed_weather_code")
+    var observedWeatherCode: Int? = null,
+
+    @Column(name = "xp_awarded", nullable = false)
+    var xpAwarded: Int = 0,
 
     @Column(name = "user_id", nullable = false)
     var userId: UUID

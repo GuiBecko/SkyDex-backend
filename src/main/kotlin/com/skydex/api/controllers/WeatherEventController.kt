@@ -1,5 +1,6 @@
 package com.skydex.api.controllers
 
+import com.skydex.api.domain.Phenomenon
 import com.skydex.api.dto.CreateWeatherEventRequest
 import com.skydex.api.dto.WeatherEventResponse
 import com.skydex.api.errors.ForbiddenException
@@ -8,6 +9,8 @@ import com.skydex.api.models.User
 import com.skydex.api.models.WeatherEvent
 import com.skydex.api.repositories.UserRepository
 import com.skydex.api.repositories.WeatherEventRepository
+import com.skydex.api.services.BadUploadException
+import com.skydex.api.services.CaptureValidationService
 import jakarta.validation.Valid
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.HttpStatus
@@ -29,6 +32,7 @@ import java.util.UUID
 class WeatherEventController(
     private val events: WeatherEventRepository,
     private val users: UserRepository,
+    private val validation: CaptureValidationService,
     // Read-side only. `photo_url` is persisted relative so a stored row never carries a host that
     // can go stale; the absolute URL is composed on the way out by `WeatherEventResponse.from`,
     // which takes this as a required third argument. Nothing on the write path may use it.
@@ -40,16 +44,35 @@ class WeatherEventController(
         @AuthenticationPrincipal currentUser: User,
         @Valid @RequestBody request: CreateWeatherEventRequest
     ): ResponseEntity<WeatherEventResponse> {
+        val claimed = Phenomenon.fromNameOrNull(request.phenomenon)
+            ?: throw BadUploadException("Unknown phenomenon: ${request.phenomenon}")
+
+        // One stamp, used for BOTH the validation and the stored row. Reading Instant.now()
+        // twice could straddle an hour boundary and validate against a slot the capture is
+        // then not recorded in — rare, but it would be an unreproducible "why is this
+        // UNCONFIRMED" bug. The client never supplies this; see Task 6.
+        val capturedAt = Instant.now()
+
+        val result = validation.validate(
+            claimed = claimed,
+            latitude = request.latitude,
+            longitude = request.longitude,
+            capturedAt = capturedAt
+        )
+
         val saved = events.save(
             WeatherEvent(
                 id = null,
                 title = request.title,
                 description = request.description,
                 photoUrl = request.photoUrl,
-                // Server-stamped, never client-supplied: see this task's opening note.
-                capturedAt = Instant.now(),
+                capturedAt = capturedAt,
                 latitude = request.latitude,
                 longitude = request.longitude,
+                phenomenon = claimed,
+                validationStatus = result.status,
+                observedWeatherCode = result.observedWeatherCode,
+                xpAwarded = result.xpAwarded,
                 userId = currentUser.id!!
             )
         )

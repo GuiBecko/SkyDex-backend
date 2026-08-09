@@ -87,6 +87,32 @@ class SkyDexControllerTest : IntegrationTestBase() {
     }
 
     @Test
+    fun `total xp counts only confirmed captures, even if an unconfirmed row carries xp`() {
+        val user = persistUser(email = "corrupt-row@skydex.com")
+        persistEvent(
+            user, title = "Confirmed",
+            phenomenon = Phenomenon.RAIN,
+            validationStatus = ValidationStatus.CONFIRMED,
+            xpAwarded = Phenomenon.RAIN.rarity.xp
+        )
+        // Deliberately violates the production invariant that only CONFIRMED captures carry XP.
+        // `CaptureValidationService`/`CaptureCommitService` never write a row like this one -
+        // but `persistEvent` writes straight to the repository, bypassing them, precisely so this
+        // fixture can construct the row `totalXpForUser` must not be fooled by if that invariant
+        // ever breaks elsewhere.
+        persistEvent(
+            user, title = "Unconfirmed but carrying xp anyway",
+            phenomenon = Phenomenon.HAILSTORM,
+            validationStatus = ValidationStatus.UNCONFIRMED,
+            xpAwarded = Phenomenon.HAILSTORM.rarity.xp
+        )
+
+        mockMvc.perform(get("/api/skydex").header("Authorization", authHeaderFor(user)))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.totalXp").value(Phenomenon.RAIN.rarity.xp))
+    }
+
+    @Test
     fun `one user's captures never appear in another user's collection`() {
         val mine = persistUser(email = "mine@skydex.com")
         val theirs = persistUser(email = "theirs@skydex.com")

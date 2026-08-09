@@ -16,6 +16,16 @@ interface UploadedPhotoRepository : JpaRepository<UploadedPhoto, UUID> {
     fun findByFilename(filename: String): UploadedPhoto?
 
     /**
+     * Removes every photo row [uploaderId] uploaded. Used only by account deletion.
+     *
+     * Rows only: the JPEGs themselves stay on disk. There is no delete-photo endpoint and no
+     * sweep yet — that is the orphaned-file backlog item — so this deliberately leaves the bytes
+     * and takes the rows, which are the part that would otherwise reference a user id that no
+     * longer resolves.
+     */
+    fun deleteByUploaderId(uploaderId: UUID)
+
+    /**
      * Spends the photo, atomically. Returns the number of rows the database actually changed: `1`
      * if this caller won it, `0` if the photo was already spent.
      *

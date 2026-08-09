@@ -1,13 +1,19 @@
 package com.skydex.api.controller
 
+import com.skydex.api.domain.Achievement
 import com.skydex.api.dto.UpdateProfileRequest
+import com.skydex.api.models.Friendship
+import com.skydex.api.models.FriendshipStatus
+import com.skydex.api.models.UserBadge
 import com.skydex.api.repositories.UserRepository
 import com.skydex.api.support.IntegrationTestBase
 import com.skydex.api.support.authHeaderFor
 import com.skydex.api.support.persistEvent
+import com.skydex.api.support.persistUploadedPhoto
 import com.skydex.api.support.persistUser
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.doAnswer
 import org.springframework.boot.test.mock.mockito.SpyBean
@@ -62,10 +68,48 @@ class UserControllerTest : IntegrationTestBase() {
             .andExpect(jsonPath("$.email").value("new@test.com"))
     }
 
+    /**
+     * Account deletion has to sweep every table that references the user, and there are four of
+     * them. None is joined by a foreign key — `weather_events`, `uploaded_photos`, `friendships`
+     * and `user_badges` all reference `users` by a plain UUID column — so the database will not
+     * refuse the delete and will not cascade it either. Nothing but this handler stands between a
+     * deleted account and rows pointing at a user id that no longer resolves.
+     *
+     * The friendship orphans were the ones that were not merely untidy. `FriendshipService.friendIds`
+     * counts rows, so a dead user kept inflating their surviving friend's friend count and could
+     * unlock `Achievement.WEATHER_NETWORK` (three friends) from accounts that no longer exist —
+     * while `friends()` resolves each id through `mapNotNull` and silently drops the ghost, so the
+     * count and the list disagreed with each other.
+     *
+     * The survivor assertions at the end are not padding: a `deleteAll()` on any of these
+     * repositories would satisfy every "the deleted user's rows are gone" assertion above while
+     * destroying the rest of the table.
+     */
     @Test
-    fun `deletes the authenticated user and returns 204 No Content`() {
+    fun `deletes the authenticated user and every row that references them, returning 204 No Content`() {
         val user = persistUser(name = "User to delete", email = "delete@test.com")
+        val survivor = persistUser(name = "Stays Behind", email = "survivor@test.com")
+
         persistEvent(owner = user, title = "Orphan risk", description = "Should go with the user", photoUrl = "/api/photos/orphan.jpg")
+        persistUploadedPhoto(owner = user, filename = "doomed.jpg")
+        userBadgeRepository.save(
+            UserBadge(id = null, userId = user.id!!, achievement = Achievement.FIRST_CAPTURE)
+        )
+        // One friendship on each side, because the user is the requester in some rows and the
+        // addressee in others and a WHERE clause covering only one side would leave half behind.
+        friendshipRepository.save(
+            Friendship(id = null, requesterId = user.id!!, addresseeId = survivor.id!!, status = FriendshipStatus.ACCEPTED)
+        )
+        friendshipRepository.save(
+            Friendship(id = null, requesterId = survivor.id!!, addresseeId = user.id!!, status = FriendshipStatus.PENDING)
+        )
+
+        // Everything the survivor owns, which must still be there afterwards.
+        persistEvent(owner = survivor, title = "Not mine to delete", photoUrl = "/api/photos/keep.jpg")
+        persistUploadedPhoto(owner = survivor, filename = "keep.jpg")
+        userBadgeRepository.save(
+            UserBadge(id = null, userId = survivor.id!!, achievement = Achievement.FIRST_CAPTURE)
+        )
 
         mockMvc.perform(
             delete("/api/users/me")
@@ -73,11 +117,41 @@ class UserControllerTest : IntegrationTestBase() {
         )
             .andExpect(status().isNoContent)
 
-        val stillExists = userRepository.existsById(user.id!!)
-        assert(!stillExists)
+        assertFalse(userRepository.existsById(user.id!!), "the user row survived the delete")
+        assertTrue(
+            weatherEventRepository.findByUserIdOrderByCapturedAtDesc(user.id!!).isEmpty(),
+            "captures were orphaned"
+        )
+        assertTrue(
+            uploadedPhotoRepository.findAll().none { it.uploaderId == user.id },
+            "uploaded photos were orphaned"
+        )
+        assertTrue(
+            userBadgeRepository.findByUserId(user.id!!).isEmpty(),
+            "badges were orphaned"
+        )
+        assertTrue(
+            friendshipRepository.findAll()
+                .none { it.requesterId == user.id || it.addresseeId == user.id },
+            "friendships were orphaned"
+        )
 
-        val orphanedEvents = weatherEventRepository.findByUserIdOrderByCapturedAtDesc(user.id!!)
-        assert(orphanedEvents.isEmpty())
+        assertTrue(userRepository.existsById(survivor.id!!), "the delete took another user with it")
+        assertEquals(
+            1,
+            weatherEventRepository.findByUserIdOrderByCapturedAtDesc(survivor.id!!).size,
+            "the delete took another user's captures with it"
+        )
+        assertEquals(
+            1,
+            uploadedPhotoRepository.findAll().count { it.uploaderId == survivor.id },
+            "the delete took another user's photos with it"
+        )
+        assertEquals(
+            1,
+            userBadgeRepository.findByUserId(survivor.id!!).size,
+            "the delete took another user's badges with it"
+        )
     }
 
     @Test

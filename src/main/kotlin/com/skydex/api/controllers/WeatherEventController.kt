@@ -15,6 +15,8 @@ import com.skydex.api.services.CaptureValidationService
 import com.skydex.api.services.PhotoProvenanceService
 import com.skydex.api.services.lastKnownPosition
 import jakarta.validation.Valid
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -103,7 +105,25 @@ class WeatherEventController(
 
         // Persist any badge this capture just unlocked. The response shape is unchanged —
         // the user sees new badges on the Profile screen, which marks recent ones as new.
-        badges.syncFor(currentUser)
+        //
+        // This runs AFTER `commit` returned and deliberately outside its transaction; that
+        // placement is intentional and stays. What it means, though, is that by the time we get
+        // here the capture row is inserted and the photo is stamped `consumed_at` — both
+        // committed, neither undoable. Letting an exception out of here would answer a successful
+        // capture with a 500, and the client cannot recover from that one: Task 12b made photos
+        // single-use, so every retry cites a spent photo and is refused with "This photo has
+        // already been used for a capture". The capture would be stranded permanently.
+        //
+        // `BadgeService.syncFor` already recovers from the DataIntegrityViolationException of two
+        // requests crossing a threshold together. This is the net under everything else, and the
+        // trade is easy: `ProfileService.forUser` calls `syncFor` on every profile read, so a
+        // badge missed here is awarded the next time the user opens Profile. A delayed badge is
+        // not worth failing a capture that already happened.
+        try {
+            badges.syncFor(currentUser)
+        } catch (e: Exception) {
+            log.error("Badge sync failed after committing capture {}; continuing", saved.id, e)
+        }
 
         return ResponseEntity.status(HttpStatus.CREATED)
             .body(WeatherEventResponse.from(saved, currentUser, publicBaseUrl))
@@ -170,5 +190,9 @@ class WeatherEventController(
         }
         events.delete(event)
         return ResponseEntity.noContent().build()
+    }
+
+    private companion object {
+        val log: Logger = LoggerFactory.getLogger(WeatherEventController::class.java)
     }
 }

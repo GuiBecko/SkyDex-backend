@@ -5,6 +5,7 @@ import com.skydex.api.dto.CreateWeatherEventRequest
 import com.skydex.api.dto.HourlyData
 import com.skydex.api.dto.OpenMeteoResponse
 import com.skydex.api.models.User
+import com.skydex.api.services.BadgeService
 import com.skydex.api.services.OpenMeteoClient
 import com.skydex.api.support.IntegrationTestBase
 import com.skydex.api.support.authHeaderFor
@@ -19,11 +20,13 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentMatchers.anyDouble
+import org.mockito.Mockito.doThrow
 import org.mockito.Mockito.never
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
 import org.springframework.boot.test.mock.mockito.MockBean
+import org.springframework.boot.test.mock.mockito.SpyBean
 import org.springframework.http.MediaType
 import org.springframework.mock.web.MockMultipartFile
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
@@ -47,6 +50,13 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     @MockBean
     private lateinit var openMeteoClient: OpenMeteoClient
 
+    /**
+     * A spy, not a mock: badges are awarded for real in every test here except the one that makes
+     * this throw on purpose. Spring resets it between test methods, so that stubbing does not leak.
+     */
+    @SpyBean
+    private lateinit var badgeServiceSpy: BadgeService
+
     private lateinit var testUser: User
     private lateinit var authHeader: String
 
@@ -67,6 +77,18 @@ class WeatherEventControllerTest : IntegrationTestBase() {
      */
     private fun freshPhotoFor(owner: User, uploadedAt: Instant = Instant.now()): String =
         "/api/photos/" + persistUploadedPhoto(owner, uploadedAt = uploadedAt).filename
+
+    /**
+     * `ArgumentMatchers.any()` returns null, and Kotlin plants a non-null assertion at the call
+     * site of any function taking a non-null reference — so the bare matcher throws
+     * "any(...) must not be null" before Mockito can record it. Routing it through an unbounded
+     * type parameter erases the nullability and lets the matcher register normally.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun <T> anyRef(): T {
+        org.mockito.ArgumentMatchers.any<T>()
+        return null as T
+    }
 
     @Test
     fun `registers a new event and returns 201 with a generated id`() {
@@ -1182,5 +1204,47 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             .andExpect(status().isCreated)
             .andExpect(jsonPath("$.validationStatus").value("UNCONFIRMED"))
             .andExpect(jsonPath("$.xpAwarded").value(0))
+    }
+
+    /**
+     * A badge failure must not fail a capture that has already been committed.
+     *
+     * `badges.syncFor` runs after `captureCommit.commit` has returned, deliberately outside its
+     * transaction. That placement is correct and stays — but it means anything `syncFor` throws
+     * that is not the `DataIntegrityViolationException` it already recovers from lands after the
+     * capture row is inserted and after the photo has been stamped `consumed_at`. The caller then
+     * gets a 500 for a capture that exists, whose photo is spent, and which no retry can recreate:
+     * every subsequent attempt cites the same spent photo and is refused with
+     * "This photo has already been used for a capture", forever.
+     *
+     * So this asserts the whole invariant, not just the status code: 201, the row is really there,
+     * and the photo really was consumed. A handler that answered 201 by skipping the commit would
+     * satisfy the first assertion alone.
+     *
+     * Badges are the right thing to sacrifice here. `ProfileService.forUser` calls `syncFor` on
+     * every profile read, so anything missed now is awarded the next time the user opens Profile.
+     */
+    @Test
+    fun `a badge failure after the capture is committed does not fail the capture`() {
+        val user = persistUser(email = "badge-explodes@skydex.com")
+        thunderstormAt(portoAlegre.first, portoAlegre.second)
+        val photoUrl = freshPhotoFor(user)
+
+        doThrow(IllegalStateException("badge sync exploded"))
+            .`when`(badgeServiceSpy).syncFor(anyRef())
+
+        val body = postCapture(user, thunderstormCapture(photoUrl, portoAlegre))
+            .andExpect(status().isCreated)
+            .andReturn().response.contentAsString
+
+        val id = UUID.fromString(objectMapper.readTree(body).get("id").asText())
+        assertTrue(
+            weatherEventRepository.findById(id).isPresent,
+            "the capture was reported created but is not in the database"
+        )
+        assertNotNull(
+            uploadedPhotoRepository.findByFilename(photoUrl.substringAfterLast('/'))?.consumedAt,
+            "the photo should have been spent by the commit that already succeeded"
+        )
     }
 }

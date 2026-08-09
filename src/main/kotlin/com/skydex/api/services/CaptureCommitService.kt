@@ -43,9 +43,11 @@ class CaptureCommitService(
      * "unlimited, in one burst, once a day" — the collect-several-in-an-afternoon attack the whole
      * task exists to stop, just issued in parallel instead of in series.
      *
-     * Re-reading the row under [UserRepository.findByIdForUpdate] serialises those captures: each
+     * Re-reading the row under [UserRepository.lockTrailForUpdate] serialises those captures: each
      * one sees the trail the previous one left, and the second of a simultaneous pair is downgraded
-     * exactly as it would have been had it arrived a moment later.
+     * exactly as it would have been had it arrived a moment later. That read returns columns rather
+     * than a `User` for reasons that are entirely about correctness, not taste — see its KDoc before
+     * changing it.
      *
      * **Why the lock is safe here specifically.** This service exists to keep a transaction off the
      * Open-Meteo call — `OpenMeteoClient` has no timeouts, and a pool connection held across it
@@ -68,9 +70,8 @@ class CaptureCommitService(
 
         // Lock ordering is photo-then-user everywhere, so two captures by one user cannot deadlock
         // against each other by grabbing the pair in opposite orders.
-        val locked = users.findByIdForUpdate(event.userId)
         val reachable = TravelPlausibility.isReachable(
-            previous = locked?.lastKnownPosition(),
+            previous = lockedTrail(event.userId),
             latitude = event.latitude,
             longitude = event.longitude,
             at = event.capturedAt
@@ -91,5 +92,23 @@ class CaptureCommitService(
             at = saved.capturedAt
         )
         return saved
+    }
+
+    /**
+     * The trail for [userId], read as scalars under an exclusive row lock held until this
+     * transaction ends.
+     *
+     * Null when the user has never captured — and also, harmlessly, if the row has vanished, which
+     * an authenticated request cannot actually produce. Both mean the same thing to the caller:
+     * nothing to be inconsistent with.
+     *
+     * See [UserRepository.lockTrailForUpdate] for why this must not be an entity read.
+     */
+    private fun lockedTrail(userId: UUID): LastKnownPosition? {
+        val row = users.lockTrailForUpdate(userId) ?: return null
+        val latitude = row.latitude ?: return null
+        val longitude = row.longitude ?: return null
+        val at = row.at ?: return null
+        return LastKnownPosition(latitude, longitude, at)
     }
 }

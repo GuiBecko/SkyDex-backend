@@ -65,6 +65,8 @@ data class WeatherEventResponse(
     val userId: UUID,
     val authorName: String,
     val phenomenon: String,
+    val phenomenonName: String,
+    val rarity: String,
     val validationStatus: String,
     val xpAwarded: Int
 ) {
@@ -101,6 +103,8 @@ data class WeatherEventResponse(
             userId = event.userId,
             authorName = author.name,
             phenomenon = event.phenomenon.name,
+            phenomenonName = event.phenomenon.displayName,
+            rarity = event.phenomenon.rarity.name,
             validationStatus = event.validationStatus.name,
             xpAwarded = event.xpAwarded
         )

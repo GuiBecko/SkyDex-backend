@@ -2,6 +2,7 @@ package com.skydex.api.repositories
 
 import com.skydex.api.domain.ValidationStatus
 import com.skydex.api.models.WeatherEvent
+import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
@@ -12,6 +13,11 @@ import java.util.UUID
 interface WeatherEventRepository : JpaRepository<WeatherEvent, UUID> {
 
     fun findByUserIdOrderByCapturedAtDesc(userId: UUID): List<WeatherEvent>
+
+    fun findByUserIdInOrderByCapturedAtDesc(
+        userIds: Collection<UUID>,
+        pageable: Pageable
+    ): List<WeatherEvent>
 
     fun findByUserIdAndValidationStatus(
         userId: UUID,

@@ -16,9 +16,12 @@ import java.util.UUID
  * It exists as its own service purely to own that transaction boundary, and it is kept
  * deliberately tiny and free of network I/O. `WeatherEventController.create` must NOT be
  * `@Transactional` itself: it calls Open-Meteo, and a transaction spanning that call would pin a
- * HikariCP connection for the duration of an outbound HTTP request that has no configured
- * timeouts. One slow upstream would then drain the pool and take down every endpoint, which is a
- * far worse failure than the one it would be preventing.
+ * HikariCP connection for the duration of an outbound HTTP request. `OpenMeteoClient` now bounds
+ * that duration (a 5s read timeout, added with the production-readiness sweep), which caps the
+ * damage but does not remove it — under a slow upstream every concurrent capture would still hold
+ * a pool connection for whole seconds, and the pool is far smaller than the request-thread pool.
+ * Draining it takes down every endpoint, which is a far worse failure than the one it would be
+ * preventing.
  */
 @Service
 class CaptureCommitService(
@@ -50,9 +53,10 @@ class CaptureCommitService(
      * changing it.
      *
      * **Why the lock is safe here specifically.** This service exists to keep a transaction off the
-     * Open-Meteo call — `OpenMeteoClient` has no timeouts, and a pool connection held across it
-     * would take down every endpoint under one slow upstream. That argument does not extend to the
-     * lock, and it is worth being precise about why: read-check-write only has to be atomic with
+     * Open-Meteo call — a pool connection held across it would take down every endpoint under one
+     * slow upstream, and `OpenMeteoClient`'s read timeout bounds that wait at seconds rather than
+     * removing it. That argument does not extend to the lock, and it is worth being precise about
+     * why: read-check-write only has to be atomic with
      * respect to ITSELF. All three statements are here, all three are local database work, and the
      * lock is held for the microseconds they take — never across the network call, which finished
      * before this method was entered.

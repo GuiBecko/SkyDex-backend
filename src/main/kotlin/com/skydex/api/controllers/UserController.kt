@@ -37,9 +37,23 @@ class UserController(
         if (existing != null && existing.id != currentUser.id) {
             throw ConflictException("Email already registered")
         }
-        currentUser.name = request.name
-        currentUser.email = request.email
-        return UserResponse.from(users.save(currentUser))
+        // A targeted UPDATE of exactly the two profile columns, NOT `currentUser.name = ...;
+        // users.save(currentUser)`. `currentUser` is the entity SecurityFilter loaded at the start
+        // of this request, so saving it writes every column back from that snapshot — including the
+        // movement trail added in Task 12c. A profile edit racing a capture would restore an older
+        // `last_capture_at`, and an older timestamp means a bigger reachable radius: renaming
+        // yourself would have been a way to buy travel budget.
+        users.updateProfile(currentUser.id!!, request.name, request.email)
+        // Built from the request rather than by mutating and re-reading `currentUser`, for the same
+        // reason. Under `open-in-view` (on by default in dev) that entity is managed, so assigning
+        // to its fields here would make it dirty and Hibernate would flush the very full-entity
+        // write this method just avoided.
+        return UserResponse(
+            id = currentUser.id!!,
+            name = request.name,
+            email = request.email,
+            joinedAt = currentUser.joinedAt
+        )
     }
 
     @Transactional

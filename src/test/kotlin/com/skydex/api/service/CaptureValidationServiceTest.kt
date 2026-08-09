@@ -349,6 +349,62 @@ class CaptureValidationServiceTest {
         assertEquals(ValidationStatus.CONFIRMED, result.status)
     }
 
+    /**
+     * These two straddle the threshold, and they are the only tests that pin the DISTANCE
+     * calculation to a magnitude rather than to an order of magnitude.
+     *
+     * Every other travel case here is orders of magnitude clear of its budget — 10 km against 900,
+     * or 18,500 km against 75 — so a badly broken `greatCircleKm` still lands them all on the right
+     * side and the suite stays green. Delete the `Math.toRadians` conversions and the 10 km hop
+     * computes as 574 km, comfortably under an hour's 900 km budget, so it still CONFIRMS and its
+     * test still passes; Tokyo computes as garbage that is still over 75 km, so it still fails to
+     * confirm and its test still passes too. Only a case sitting NEAR the line can tell 800 km from
+     * the 5,807 km that same bug produces here. Between them these two pin the distance function
+     * and `MAX_SPEED_KMH` together to about ±10%.
+     *
+     * Both run due north from (0, 0) along a meridian, where the haversine reduces exactly to
+     * `EARTH_RADIUS_KM * dLatRadians` — so the expected distances are arithmetic, not measurements,
+     * and do not depend on which Earth radius or ellipsoid anyone prefers.
+     */
+    @Test
+    fun `confirms eight hundred kilometres in an hour, just under the speed limit`() {
+        // 7.1946 degrees of latitude = 6371 km * 0.12557 rad = 800.0 km.
+        `when`(client.fetchHourlyForecast(7.1946, 0.0)).thenReturn(
+            forecast("2026-08-07T14:00" to 95)
+        )
+
+        val result = service.validate(
+            claimed = Phenomenon.THUNDERSTORM,
+            latitude = 7.1946,
+            longitude = 0.0,
+            capturedAt = Instant.parse("2026-08-07T14:10:00Z"),
+            previous = LastKnownPosition(0.0, 0.0, Instant.parse("2026-08-07T13:10:00Z")),
+            locationIsMock = false
+        )
+
+        assertEquals(ValidationStatus.CONFIRMED, result.status)
+    }
+
+    @Test
+    fun `does not confirm a thousand kilometres in an hour, just over the speed limit`() {
+        // 8.9932 degrees of latitude = 6371 km * 0.15696 rad = 1000.0 km.
+        `when`(client.fetchHourlyForecast(8.9932, 0.0)).thenReturn(
+            forecast("2026-08-07T14:00" to 95)
+        )
+
+        val result = service.validate(
+            claimed = Phenomenon.THUNDERSTORM,
+            latitude = 8.9932,
+            longitude = 0.0,
+            capturedAt = Instant.parse("2026-08-07T14:10:00Z"),
+            previous = LastKnownPosition(0.0, 0.0, Instant.parse("2026-08-07T13:10:00Z")),
+            locationIsMock = false
+        )
+
+        assertEquals(ValidationStatus.UNCONFIRMED, result.status)
+        assertEquals(0, result.xpAwarded)
+    }
+
     @Test
     fun `does not confirm a capture the client reports as mock-located`() {
         tokyoThunderstormAt("2026-08-07T14:00")

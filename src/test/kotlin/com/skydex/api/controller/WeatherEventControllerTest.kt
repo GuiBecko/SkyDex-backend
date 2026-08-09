@@ -38,6 +38,9 @@ import java.time.LocalDateTime
 import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class WeatherEventControllerTest : IntegrationTestBase() {
 
@@ -1072,6 +1075,87 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         postCapture(user, legacyPayload)
             .andExpect(status().isCreated)
             .andExpect(jsonPath("$.validationStatus").value("CONFIRMED"))
+    }
+
+    /**
+     * The trail is read once, unsynchronised, at the start of the request, and the Open-Meteo call
+     * sits between that read and the commit. So a capture can be judged reachable against a trail
+     * that has already moved by the time it is written — this reproduces exactly that interleaving,
+     * deterministically, by moving the trail from inside the forecast stub.
+     *
+     * `CaptureCommitService` re-reads the row under a lock and downgrades, which is what makes the
+     * outcome UNCONFIRMED rather than a confirmed teleport.
+     */
+    @Test
+    fun `downgrades a capture whose trail moved while the forecast was being fetched`() {
+        val user = persistUser(email = "interleaved@skydex.com")
+
+        `when`(openMeteoClient.fetchHourlyForecast(tokyo.first, tokyo.second)).thenAnswer {
+            // Stands in for a concurrent capture of this user's that committed while we were
+            // waiting on the network. It leaves the trail in Porto Alegre, as of now.
+            recordTrail(user, portoAlegre.first, portoAlegre.second, Instant.now())
+            OpenMeteoResponse(
+                latitude = tokyo.first,
+                longitude = tokyo.second,
+                hourly = HourlyData(
+                    time = listOf(currentSlotLabel()),
+                    temperatureCelsius = listOf(19.0),
+                    weatherCode = listOf(95)
+                )
+            )
+        }
+
+        postCapture(user, thunderstormCapture(freshPhotoFor(user), tokyo))
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.validationStatus").value("UNCONFIRMED"))
+            .andExpect(jsonPath("$.xpAwarded").value(0))
+    }
+
+    /**
+     * The attack the re-check exists to stop, run for real rather than simulated.
+     *
+     * A day of not capturing makes the reachable radius the whole planet, so every one of these
+     * passes the up-front check — they are all measured against the same stale budget. Fired
+     * concurrently they would ALL confirm, turning `MAX_SPEED_KMH`'s "one intercontinental hop a
+     * day" into "unlimited hops, in one burst, once a day", which is the collect-several-in-an-
+     * afternoon exploit the whole task is about. Serialised on the user row, the first one to
+     * commit spends the budget and the rest are downgraded.
+     *
+     * Asserted as "exactly one", not "at most one": that also catches a lock so eager it refuses
+     * every capture in the burst.
+     */
+    @Test
+    fun `confirms only one of a burst of simultaneous captures scattered across the globe`() {
+        val user = persistUser(email = "burst@skydex.com")
+        recordTrail(user, portoAlegre.first, portoAlegre.second, Instant.now().minusSeconds(86_400))
+
+        // Four corners of the world, all with weather that agrees, each with its own fresh photo.
+        val destinations = listOf(tokyo, Pair(64.1466, -21.9426), Pair(-33.8688, 151.2093), Pair(51.5072, -0.1276))
+        destinations.forEach { thunderstormAt(it.first, it.second) }
+        val payloads = destinations.map { thunderstormCapture(freshPhotoFor(user), it) }
+
+        val pool = Executors.newFixedThreadPool(destinations.size)
+        val startLine = CountDownLatch(1)
+        val statuses = try {
+            val inFlight = payloads.map { payload ->
+                pool.submit<String> {
+                    startLine.await()
+                    objectMapper.readTree(
+                        postCapture(user, payload).andReturn().response.contentAsString
+                    ).get("validationStatus").asText()
+                }
+            }
+            startLine.countDown()
+            inFlight.map { it.get(30, TimeUnit.SECONDS) }
+        } finally {
+            pool.shutdownNow()
+        }
+
+        assertEquals(
+            1,
+            statuses.count { it == "CONFIRMED" },
+            "expected exactly one of a simultaneous burst to confirm, got $statuses"
+        )
     }
 
     /**

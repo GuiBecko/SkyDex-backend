@@ -37,7 +37,21 @@ data class CreateWeatherEventRequest(
     val longitude: Double,
 
     @field:NotBlank(message = "Phenomenon is required")
-    val phenomenon: String
+    val phenomenon: String,
+
+    /**
+     * The client's own report that the coordinates above came from a mock location provider
+     * (Android's `Location.isFromMockProvider`). True means the capture cannot be CONFIRMED.
+     *
+     * Defaulted, and it has to stay defaulted: the shipped Android client does not send this field
+     * yet (Task 14 adds it), and making it required would 400 every capture from an app already in
+     * users' hands. The default is the honest one — an old client genuinely has not asserted
+     * anything about mocking.
+     *
+     * Being client-asserted, this is worth exactly what the client's honesty is worth; see
+     * `CaptureValidationService` for what it does and does not buy.
+     */
+    val locationIsMock: Boolean = false
 )
 
 data class WeatherEventResponse(

@@ -5,10 +5,14 @@ import com.skydex.api.domain.ValidationStatus
 import com.skydex.api.dto.HourlyData
 import com.skydex.api.dto.OpenMeteoResponse
 import com.skydex.api.services.CaptureValidationService
+import com.skydex.api.services.LastKnownPosition
 import com.skydex.api.services.OpenMeteoClient
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
+import org.mockito.ArgumentMatchers.anyDouble
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.never
+import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
 import java.time.Instant
 
@@ -37,7 +41,9 @@ class CaptureValidationServiceTest {
             claimed = Phenomenon.THUNDERSTORM,
             latitude = -30.0,
             longitude = -51.0,
-            capturedAt = Instant.parse("2026-08-07T14:10:00Z")
+            capturedAt = Instant.parse("2026-08-07T14:10:00Z"),
+            previous = null,
+            locationIsMock = false
         )
 
         assertEquals(ValidationStatus.CONFIRMED, result.status)
@@ -55,7 +61,9 @@ class CaptureValidationServiceTest {
             claimed = Phenomenon.HAILSTORM,
             latitude = -30.0,
             longitude = -51.0,
-            capturedAt = Instant.parse("2026-08-07T14:10:00Z")
+            capturedAt = Instant.parse("2026-08-07T14:10:00Z"),
+            previous = null,
+            locationIsMock = false
         )
 
         assertEquals(ValidationStatus.UNCONFIRMED, result.status)
@@ -77,7 +85,9 @@ class CaptureValidationServiceTest {
             claimed = Phenomenon.THUNDERSTORM,
             latitude = -30.0,
             longitude = -51.0,
-            capturedAt = Instant.parse("2026-08-07T13:50:00Z")
+            capturedAt = Instant.parse("2026-08-07T13:50:00Z"),
+            previous = null,
+            locationIsMock = false
         )
 
         assertEquals(ValidationStatus.CONFIRMED, result.status)
@@ -93,7 +103,9 @@ class CaptureValidationServiceTest {
             claimed = Phenomenon.THUNDERSTORM,
             latitude = -30.0,
             longitude = -51.0,
-            capturedAt = Instant.parse("2026-08-07T18:00:00Z")
+            capturedAt = Instant.parse("2026-08-07T18:00:00Z"),
+            previous = null,
+            locationIsMock = false
         )
 
         assertEquals(ValidationStatus.UNCONFIRMED, result.status)
@@ -108,7 +120,9 @@ class CaptureValidationServiceTest {
             claimed = Phenomenon.THUNDERSTORM,
             latitude = -30.0,
             longitude = -51.0,
-            capturedAt = Instant.parse("2026-08-07T14:10:00Z")
+            capturedAt = Instant.parse("2026-08-07T14:10:00Z"),
+            previous = null,
+            locationIsMock = false
         )
 
         assertEquals(ValidationStatus.UNCONFIRMED, result.status)
@@ -142,7 +156,9 @@ class CaptureValidationServiceTest {
             claimed = Phenomenon.THUNDERSTORM,
             latitude = -30.0,
             longitude = -51.0,
-            capturedAt = Instant.parse("2026-08-07T14:10:00Z")
+            capturedAt = Instant.parse("2026-08-07T14:10:00Z"),
+            previous = null,
+            locationIsMock = false
         )
 
         assertEquals(ValidationStatus.CONFIRMED, result.status)
@@ -159,7 +175,9 @@ class CaptureValidationServiceTest {
             claimed = Phenomenon.THUNDERSTORM,
             latitude = -30.0,
             longitude = -51.0,
-            capturedAt = Instant.parse("2026-08-07T14:10:00Z")
+            capturedAt = Instant.parse("2026-08-07T14:10:00Z"),
+            previous = null,
+            locationIsMock = false
         )
 
         assertEquals(ValidationStatus.UNCONFIRMED, result.status)
@@ -177,7 +195,9 @@ class CaptureValidationServiceTest {
             claimed = Phenomenon.THUNDERSTORM,
             latitude = -30.0,
             longitude = -51.0,
-            capturedAt = Instant.parse("2026-08-07T14:10:00Z")
+            capturedAt = Instant.parse("2026-08-07T14:10:00Z"),
+            previous = null,
+            locationIsMock = false
         )
 
         assertEquals(ValidationStatus.UNCONFIRMED, result.status)
@@ -193,11 +213,158 @@ class CaptureValidationServiceTest {
             claimed = Phenomenon.THUNDERSTORM,
             latitude = -30.0,
             longitude = -51.0,
-            capturedAt = Instant.parse("2026-08-07T14:10:00Z")
+            capturedAt = Instant.parse("2026-08-07T14:10:00Z"),
+            previous = null,
+            locationIsMock = false
         )
 
         assertEquals(ValidationStatus.UNCONFIRMED, result.status)
         assertEquals(null, result.observedWeatherCode)
         assertEquals(0, result.xpAwarded)
+    }
+
+    // --- Task 12c: the capture must be somewhere the caller could plausibly be -------------------
+
+    /** Porto Alegre, the fixed origin every travel case below measures from. */
+    private val portoAlegre = Pair(-30.0346, -51.2177)
+
+    /** Tokyo. Roughly 18,500 km from [portoAlegre] — about as far as this planet allows. */
+    private val tokyo = Pair(35.6762, 139.6503)
+
+    /** A forecast at [tokyo] that agrees with a THUNDERSTORM claim, so only travel can explain a
+     *  refusal to confirm. */
+    private fun tokyoThunderstormAt(slot: String) {
+        `when`(client.fetchHourlyForecast(tokyo.first, tokyo.second)).thenReturn(
+            OpenMeteoResponse(
+                latitude = tokyo.first,
+                longitude = tokyo.second,
+                hourly = HourlyData(
+                    time = listOf(slot),
+                    temperatureCelsius = listOf(19.0),
+                    weatherCode = listOf(95)
+                )
+            )
+        )
+    }
+
+    @Test
+    fun `confirms a capture ten kilometres from the previous position an hour later`() {
+        // 0.09 degrees of latitude is a hair over 10 km, so an hour of elapsed time makes this
+        // about 10 km/h — a bicycle, not an airliner.
+        `when`(client.fetchHourlyForecast(-29.9446, -51.2177)).thenReturn(
+            forecast("2026-08-07T14:00" to 95)
+        )
+
+        val result = service.validate(
+            claimed = Phenomenon.THUNDERSTORM,
+            latitude = -29.9446,
+            longitude = -51.2177,
+            capturedAt = Instant.parse("2026-08-07T14:10:00Z"),
+            previous = LastKnownPosition(
+                latitude = portoAlegre.first,
+                longitude = portoAlegre.second,
+                at = Instant.parse("2026-08-07T13:10:00Z")
+            ),
+            locationIsMock = false
+        )
+
+        assertEquals(ValidationStatus.CONFIRMED, result.status)
+        assertEquals(Phenomenon.THUNDERSTORM.rarity.xp, result.xpAwarded)
+    }
+
+    @Test
+    fun `does not confirm a capture another continent away minutes after the previous one`() {
+        tokyoThunderstormAt("2026-08-07T14:00")
+
+        val result = service.validate(
+            claimed = Phenomenon.THUNDERSTORM,
+            latitude = tokyo.first,
+            longitude = tokyo.second,
+            capturedAt = Instant.parse("2026-08-07T14:10:00Z"),
+            previous = LastKnownPosition(
+                latitude = portoAlegre.first,
+                longitude = portoAlegre.second,
+                at = Instant.parse("2026-08-07T14:05:00Z")
+            ),
+            locationIsMock = false
+        )
+
+        assertEquals(ValidationStatus.UNCONFIRMED, result.status)
+        assertEquals(0, result.xpAwarded)
+        // No observed code, because nothing was observed: the claim was never scored.
+        assertEquals(null, result.observedWeatherCode)
+        verify(client, never()).fetchHourlyForecast(anyDouble(), anyDouble())
+    }
+
+    /**
+     * Zero elapsed time is the case a naive `distance / hours` would divide by zero on. It is also
+     * a real state: `capturedAt` comes from `Instant.now()`, and two captures can land inside the
+     * same tick.
+     */
+    @Test
+    fun `does not throw when the previous position shares this capture's instant`() {
+        tokyoThunderstormAt("2026-08-07T14:00")
+
+        val result = service.validate(
+            claimed = Phenomenon.THUNDERSTORM,
+            latitude = tokyo.first,
+            longitude = tokyo.second,
+            capturedAt = Instant.parse("2026-08-07T14:10:00Z"),
+            previous = LastKnownPosition(
+                latitude = portoAlegre.first,
+                longitude = portoAlegre.second,
+                at = Instant.parse("2026-08-07T14:10:00Z")
+            ),
+            locationIsMock = false
+        )
+
+        assertEquals(ValidationStatus.UNCONFIRMED, result.status)
+        assertEquals(0, result.xpAwarded)
+    }
+
+    /**
+     * The same instant at the same place is the one zero-elapsed case that is NOT implausible, and
+     * it must not be swept up with the one above: a user who captures twice from one spot inside a
+     * single tick has done nothing impossible.
+     */
+    @Test
+    fun `confirms a capture at the previous position even with no time between them`() {
+        `when`(client.fetchHourlyForecast(portoAlegre.first, portoAlegre.second)).thenReturn(
+            forecast("2026-08-07T14:00" to 95)
+        )
+
+        val result = service.validate(
+            claimed = Phenomenon.THUNDERSTORM,
+            latitude = portoAlegre.first,
+            longitude = portoAlegre.second,
+            capturedAt = Instant.parse("2026-08-07T14:10:00Z"),
+            previous = LastKnownPosition(
+                latitude = portoAlegre.first,
+                longitude = portoAlegre.second,
+                at = Instant.parse("2026-08-07T14:10:00Z")
+            ),
+            locationIsMock = false
+        )
+
+        assertEquals(ValidationStatus.CONFIRMED, result.status)
+    }
+
+    @Test
+    fun `does not confirm a capture the client reports as mock-located`() {
+        tokyoThunderstormAt("2026-08-07T14:00")
+
+        val result = service.validate(
+            claimed = Phenomenon.THUNDERSTORM,
+            latitude = tokyo.first,
+            longitude = tokyo.second,
+            capturedAt = Instant.parse("2026-08-07T14:10:00Z"),
+            previous = null,
+            locationIsMock = true
+        )
+
+        assertEquals(ValidationStatus.UNCONFIRMED, result.status)
+        assertEquals(0, result.xpAwarded)
+        assertEquals(null, result.observedWeatherCode)
+        verify(client, never()).fetchHourlyForecast(anyDouble(), anyDouble())
     }
 }

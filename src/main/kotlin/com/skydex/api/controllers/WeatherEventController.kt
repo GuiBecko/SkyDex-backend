@@ -12,6 +12,7 @@ import com.skydex.api.repositories.WeatherEventRepository
 import com.skydex.api.services.BadUploadException
 import com.skydex.api.services.CaptureCommitService
 import com.skydex.api.services.CaptureValidationService
+import com.skydex.api.services.LastKnownPosition
 import com.skydex.api.services.PhotoProvenanceService
 import jakarta.validation.Valid
 import org.springframework.beans.factory.annotation.Value
@@ -66,7 +67,9 @@ class WeatherEventController(
             claimed = claimed,
             latitude = request.latitude,
             longitude = request.longitude,
-            capturedAt = capturedAt
+            capturedAt = capturedAt,
+            previous = currentUser.lastKnownPosition(),
+            locationIsMock = request.locationIsMock
         )
 
         // Spending the photo and inserting the capture are one transaction, and they come AFTER
@@ -165,4 +168,18 @@ class WeatherEventController(
         events.delete(event)
         return ResponseEntity.noContent().build()
     }
+}
+
+/**
+ * The caller's movement trail as a value, or null if they have never captured.
+ *
+ * All three columns are written together by `CaptureCommitService`, so in practice they are either
+ * all set or all null; requiring all three here means a half-written row degrades into "no trail"
+ * rather than into a position with a missing coordinate.
+ */
+private fun User.lastKnownPosition(): LastKnownPosition? {
+    val latitude = lastCaptureLatitude ?: return null
+    val longitude = lastCaptureLongitude ?: return null
+    val at = lastCaptureAt ?: return null
+    return LastKnownPosition(latitude, longitude, at)
 }

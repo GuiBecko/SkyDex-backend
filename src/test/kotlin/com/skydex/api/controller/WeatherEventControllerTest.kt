@@ -917,4 +917,197 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         // Accepted and ignored, not claimed: update must not spend the photo it was handed either.
         assertNull(uploadedPhotoRepository.findByFilename(substitute.filename)!!.consumedAt)
     }
+
+    // --- Task 12c: a capture must be somewhere the caller could plausibly be --------------------
+
+    private val portoAlegre = Pair(-30.0346, -51.2177)
+
+    /** Roughly 18,500 km from [portoAlegre]: unreachable in anything under about twenty hours. */
+    private val tokyo = Pair(35.6762, 139.6503)
+
+    /** About 10 km north of [portoAlegre] — 0.09 degrees of latitude. */
+    private val nearPortoAlegre = Pair(-29.9446, -51.2177)
+
+    /**
+     * Puts [user]'s movement trail at ([latitude], [longitude]) as of [at], the way a previous
+     * capture would have. Written straight to the row because the alternative — making a real
+     * capture first — cannot control the elapsed time: `capturedAt` is server-stamped, so two
+     * captures through the API are always milliseconds apart, and "an hour later" is
+     * unrepresentable that way.
+     */
+    private fun recordTrail(user: User, latitude: Double, longitude: Double, at: Instant) {
+        user.lastCaptureLatitude = latitude
+        user.lastCaptureLongitude = longitude
+        user.lastCaptureAt = at
+        userRepository.save(user)
+    }
+
+    /** A THUNDERSTORM-agreeing forecast at ([latitude], [longitude]) for the current hour, so that
+     *  a capture there can only fail to confirm on position. */
+    private fun thunderstormAt(latitude: Double, longitude: Double) {
+        `when`(openMeteoClient.fetchHourlyForecast(latitude, longitude)).thenReturn(
+            OpenMeteoResponse(
+                latitude = latitude,
+                longitude = longitude,
+                hourly = HourlyData(
+                    time = listOf(currentSlotLabel()),
+                    temperatureCelsius = listOf(19.0),
+                    weatherCode = listOf(95)
+                )
+            )
+        )
+    }
+
+    private fun thunderstormCapture(
+        photoUrl: String,
+        at: Pair<Double, Double>,
+        locationIsMock: Boolean = false
+    ): String = objectMapper.writeValueAsString(
+        CreateWeatherEventRequest(
+            title = "Tempestade",
+            description = "Raios sobre o bairro",
+            photoUrl = photoUrl,
+            latitude = at.first,
+            longitude = at.second,
+            phenomenon = "THUNDERSTORM",
+            locationIsMock = locationIsMock
+        )
+    )
+
+    private fun postCapture(user: User, body: String) = mockMvc.perform(
+        post("/api/events")
+            .header("Authorization", authHeaderFor(user))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body)
+    )
+
+    @Test
+    fun `confirms a capture ten kilometres and an hour on from the recorded position`() {
+        val user = persistUser(email = "cyclist@skydex.com")
+        recordTrail(user, portoAlegre.first, portoAlegre.second, Instant.now().minusSeconds(3600))
+        thunderstormAt(nearPortoAlegre.first, nearPortoAlegre.second)
+
+        postCapture(user, thunderstormCapture(freshPhotoFor(user), nearPortoAlegre))
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.validationStatus").value("CONFIRMED"))
+            .andExpect(jsonPath("$.xpAwarded").value(60))
+    }
+
+    @Test
+    fun `does not confirm a capture another continent away minutes after the last one`() {
+        val user = persistUser(email = "teleporter@skydex.com")
+        recordTrail(user, portoAlegre.first, portoAlegre.second, Instant.now().minusSeconds(300))
+        // The weather in Tokyo genuinely matches the claim, so only the journey can explain this.
+        thunderstormAt(tokyo.first, tokyo.second)
+
+        postCapture(user, thunderstormCapture(freshPhotoFor(user), tokyo))
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.validationStatus").value("UNCONFIRMED"))
+            .andExpect(jsonPath("$.xpAwarded").value(0))
+
+        // The trail follows an UNCONFIRMED capture too. If it only followed confirmed ones, this
+        // rejected hop would leave the trail in Porto Alegre and the NEXT capture in Tokyo would
+        // be measured from there and rejected as well — but a cheater could equally park the trail
+        // somewhere convenient with a capture they never intended to have confirmed. The trail
+        // records where the client CLAIMED to be, which is the sequence being tested for coherence.
+        val moved = userRepository.findById(user.id!!).orElseThrow()
+        assertEquals(tokyo.first, moved.lastCaptureLatitude)
+        assertEquals(tokyo.second, moved.lastCaptureLongitude)
+    }
+
+    @Test
+    fun `confirms a first capture, which has no recorded position to contradict`() {
+        val user = persistUser(email = "newcomer@skydex.com")
+        assertNull(user.lastCaptureAt, "a brand new user must start with no trail")
+        thunderstormAt(tokyo.first, tokyo.second)
+
+        postCapture(user, thunderstormCapture(freshPhotoFor(user), tokyo))
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.validationStatus").value("CONFIRMED"))
+            .andExpect(jsonPath("$.xpAwarded").value(60))
+
+        val trailed = userRepository.findById(user.id!!).orElseThrow()
+        assertEquals(tokyo.first, trailed.lastCaptureLatitude)
+        assertEquals(tokyo.second, trailed.lastCaptureLongitude)
+        assertNotNull(trailed.lastCaptureAt, "the first capture did not start the trail")
+    }
+
+    @Test
+    fun `does not confirm a capture the client reports as mock-located`() {
+        val user = persistUser(email = "spoofer@skydex.com")
+        thunderstormAt(portoAlegre.first, portoAlegre.second)
+
+        postCapture(
+            user,
+            thunderstormCapture(freshPhotoFor(user), portoAlegre, locationIsMock = true)
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.validationStatus").value("UNCONFIRMED"))
+            .andExpect(jsonPath("$.xpAwarded").value(0))
+
+        // Nothing was scored, so nothing was asked upstream.
+        verify(openMeteoClient, never()).fetchHourlyForecast(anyDouble(), anyDouble())
+    }
+
+    /**
+     * `locationIsMock` is defaulted, and this is what that default is for: the Android client in
+     * users' hands does not send the field until Task 14, so a required one would 400 every capture
+     * the day this shipped. Hand-built JSON, because a `CreateWeatherEventRequest` serialised by
+     * Jackson always carries the field and so could never reproduce an older client's payload.
+     *
+     * Confirming rather than merely accepting is the second half: it pins that an absent flag reads
+     * as `false`, not as `true`, which would silently deny XP to every existing user instead.
+     */
+    @Test
+    fun `accepts a capture from a client that does not send the mock-location flag`() {
+        val user = persistUser(email = "oldclient@skydex.com")
+        thunderstormAt(portoAlegre.first, portoAlegre.second)
+
+        val legacyPayload = """
+            {"title":"Tempestade","description":"Raios","photoUrl":"${freshPhotoFor(user)}",
+             "latitude":${portoAlegre.first},"longitude":${portoAlegre.second},
+             "phenomenon":"THUNDERSTORM"}
+        """.trimIndent()
+
+        postCapture(user, legacyPayload)
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.validationStatus").value("CONFIRMED"))
+    }
+
+    /**
+     * The test that pins the design, and the reason the trail is a column on `users` rather than a
+     * query over capture rows.
+     *
+     * `DELETE /api/events/{id}` is unrestricted for the owner. Derive "where was this user last"
+     * from their captures — the obvious `findFirstByUserIdOrderByCapturedAtDesc` — and the cheater
+     * erases their own history: capture in Porto Alegre, delete it, and the Tokyo capture minutes
+     * later has nothing left to be implausible against. A trail on `users` is never deleted, so it
+     * still remembers.
+     */
+    @Test
+    fun `deleting the previous capture does not clear the movement trail`() {
+        val user = persistUser(email = "eraser@skydex.com")
+        thunderstormAt(portoAlegre.first, portoAlegre.second)
+        thunderstormAt(tokyo.first, tokyo.second)
+
+        val firstId = objectMapper.readTree(
+            postCapture(user, thunderstormCapture(freshPhotoFor(user), portoAlegre))
+                .andExpect(status().isCreated)
+                .andReturn().response.contentAsString
+        ).get("id").asText()
+
+        mockMvc.perform(
+            delete("/api/events/{id}", firstId).header("Authorization", authHeaderFor(user))
+        ).andExpect(status().isNoContent)
+
+        assertTrue(
+            weatherEventRepository.findById(UUID.fromString(firstId)).isEmpty,
+            "the capture the trail came from is supposed to be gone"
+        )
+
+        postCapture(user, thunderstormCapture(freshPhotoFor(user), tokyo))
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.validationStatus").value("UNCONFIRMED"))
+            .andExpect(jsonPath("$.xpAwarded").value(0))
+    }
 }

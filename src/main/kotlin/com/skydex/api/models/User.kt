@@ -29,7 +29,31 @@ class User(
     private var passwordHash: String = "",
 
     @Column(name = "joined_at", nullable = false)
-    var joinedAt: Instant = Instant.now()
+    var joinedAt: Instant = Instant.now(),
+
+    // --- Movement trail (Task 12c) --------------------------------------------------------------
+    // Where this user's last capture claimed to be, and when. Written on EVERY capture, confirmed
+    // or not, so a deliberately-unconfirmed capture cannot be used to park the trail somewhere
+    // convenient before jumping.
+    //
+    // This deliberately does NOT live in `weather_events`, even though every value here is also on
+    // a capture row. `DELETE /api/events/{id}` is unrestricted for the owner, so a trail derived
+    // from capture rows is one the cheater can erase: capture in Tokyo, delete it, and the next
+    // capture has nothing implausible to compare against. The trail has to outlive the captures,
+    // so it lives here and is never deleted.
+    //
+    // Nullable as a group: a user who has never captured has no trail, and that absence is a real
+    // state rather than a placeholder. Read them through `lastKnownPosition()` in
+    // `WeatherEventController`, which only reports a position when all three are present.
+
+    @Column(name = "last_capture_latitude")
+    var lastCaptureLatitude: Double? = null,
+
+    @Column(name = "last_capture_longitude")
+    var lastCaptureLongitude: Double? = null,
+
+    @Column(name = "last_capture_at")
+    var lastCaptureAt: Instant? = null
 ) : UserDetails {
 
     override fun getAuthorities(): MutableCollection<out GrantedAuthority> =

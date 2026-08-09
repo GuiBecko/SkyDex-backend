@@ -29,7 +29,7 @@ class WeatherControllerTest : IntegrationTestBase() {
             .toString()
 
     @Test
-    fun `maps a thunderstorm weather code to a danger-level phenomenon`() {
+    fun `maps a thunderstorm weather code to its catalog entry`() {
         val user = persistUser(email = "weather@skydex.com")
         `when`(openMeteoClient.fetchHourlyForecast(-23.55, -46.63)).thenReturn(
             OpenMeteoResponse(
@@ -50,9 +50,37 @@ class WeatherControllerTest : IntegrationTestBase() {
                 .header("Authorization", authHeaderFor(user))
         )
             .andExpect(status().isOk)
-            .andExpect(jsonPath("$[0].phenomenon").value("Tempestade com Trovões"))
+            .andExpect(jsonPath("$[0].phenomenon").value("THUNDERSTORM"))
+            .andExpect(jsonPath("$[0].phenomenonName").value("Tempestade com Trovões"))
+            .andExpect(jsonPath("$[0].rarity").value("RARE"))
             .andExpect(jsonPath("$[0].alertLevel").value("Perigo"))
             .andExpect(jsonPath("$[0].temperatureCelsius").value(21.5))
+    }
+
+    @Test
+    fun `skips hours whose weather code is not in the catalog`() {
+        val user = persistUser(email = "gaps@skydex.com")
+        `when`(openMeteoClient.fetchHourlyForecast(1.0, 2.0)).thenReturn(
+            OpenMeteoResponse(
+                latitude = 1.0,
+                longitude = 2.0,
+                hourly = HourlyData(
+                    time = listOf(slotAt(1), slotAt(2), slotAt(3)),
+                    temperatureCelsius = listOf(20.0, 21.0, 22.0),
+                    weatherCode = listOf(4, null, 45)
+                )
+            )
+        )
+
+        mockMvc.perform(
+            get("/api/weather/nearby")
+                .param("lat", "1.0")
+                .param("lon", "2.0")
+                .header("Authorization", authHeaderFor(user))
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.length()").value(1))
+            .andExpect(jsonPath("$[0].phenomenon").value("FOG"))
     }
 
     @Test
@@ -96,7 +124,41 @@ class WeatherControllerTest : IntegrationTestBase() {
         )
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.length()").value(1))
-            .andExpect(jsonPath("$[0].phenomenon").value("Chuva"))
+            .andExpect(jsonPath("$[0].phenomenon").value("RAIN"))
+            .andExpect(jsonPath("$[0].phenomenonName").value("Chuva"))
             .andExpect(jsonPath("$[0].temperatureCelsius").value(19.0))
+    }
+
+    // The whole reason this service truncates the window to the hour. Under the OLD controller's
+    // bare `Instant.now()` the slot covering the current hour is in the past and gets skipped;
+    // under `truncatedTo(HOURS)` it is included. That difference is not cosmetic: the capture
+    // screen renders this list while Task 12's validator scores the photo against the slot nearest
+    // its timestamp — the same current-hour slot. Without this test the truncation is revertible
+    // in silence, and the symptom would surface much later as a spurious UNCONFIRMED.
+    // `slotAt(0)` truncates to the current hour, which is the discriminating value.
+    @Test
+    fun `includes the slot covering the current hour`() {
+        val user = persistUser(email = "current-hour@skydex.com")
+        `when`(openMeteoClient.fetchHourlyForecast(5.0, 6.0)).thenReturn(
+            OpenMeteoResponse(
+                latitude = 5.0,
+                longitude = 6.0,
+                hourly = HourlyData(
+                    time = listOf(slotAt(0)),
+                    temperatureCelsius = listOf(23.0),
+                    weatherCode = listOf(95)
+                )
+            )
+        )
+
+        mockMvc.perform(
+            get("/api/weather/nearby")
+                .param("lat", "5.0")
+                .param("lon", "6.0")
+                .header("Authorization", authHeaderFor(user))
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.length()").value(1))
+            .andExpect(jsonPath("$[0].phenomenon").value("THUNDERSTORM"))
     }
 }

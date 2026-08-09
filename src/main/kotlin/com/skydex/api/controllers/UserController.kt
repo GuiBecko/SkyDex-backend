@@ -59,10 +59,13 @@ class UserController(
         // `last_capture_at`, and an older timestamp means a bigger reachable radius: renaming
         // yourself would have been a way to buy travel budget.
         users.updateProfile(currentUser.id!!, request.name, request.email)
-        // Built from the request rather than by mutating and re-reading `currentUser`, for the same
-        // reason. Under `open-in-view` (on by default in dev) that entity is managed, so assigning
-        // to its fields here would make it dirty and Hibernate would flush the very full-entity
-        // write this method just avoided.
+        // Built from the request rather than by mutating and re-reading `currentUser`, for the
+        // same reason. Since Task 13 `open-in-view` is off in every profile, so that entity is
+        // detached and assigning to its fields would not flush anything — but this does not depend
+        // on that. Were a request-scoped persistence context ever reintroduced, the entity would be
+        // managed, the assignment would make it dirty, and Hibernate would flush exactly the
+        // full-entity write this method just went to some trouble to avoid. Composing the response
+        // from the request is correct under both, so the flag cannot silently break it.
         return UserResponse(
             id = currentUser.id!!,
             name = request.name,

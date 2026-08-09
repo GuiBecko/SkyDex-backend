@@ -27,19 +27,25 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * The travel checks, run under the persistence configuration the application actually ships with.
+ * The travel checks, run under `open-in-view=true` — a configuration the application does **not**
+ * ship with, and that is the point.
  *
- * Every other test in this suite runs with `spring.jpa.open-in-view=false`, because that is set in
- * `application-test.properties`. Nothing sets it in `application.properties`, so dev and production
- * run Spring Boot's default of `true`: one EntityManager bound to the whole request, entities that
- * stay managed across it, and an identity map that can serve a previously-loaded instance in place
- * of a fresh read. That is a materially different persistence code path from the one the rest of
- * the suite exercises, and the anti-cheat logic in `CaptureCommitService` turns on exactly the kind
- * of question — "are these values the ones in the row I just locked?" — that the difference
- * decides.
+ * As of Task 13 `spring.jpa.open-in-view=false` in every profile: `application.properties` and
+ * `application-test.properties` both set it. So this class is not covering production's persistence
+ * configuration (it once was, before Task 13, which is what the original version of this comment
+ * described). It covers the *other* one.
  *
- * So this class pins the same two properties as the OSIV-off tests, under OSIV on. It is small on
- * purpose: it is not a second copy of the capture suite, only of the parts whose correctness could
+ * OSIV on means one EntityManager bound to the whole request, entities that stay managed across it,
+ * and an identity map that can serve a previously-loaded instance in place of a fresh read. The
+ * anti-cheat logic in `CaptureCommitService` turns on exactly the question that difference decides:
+ * "are these values the ones in the row I just locked?" `UserRepository.lockTrailForUpdate` answers
+ * it with a scalar projection, which is correct under either setting *because* it is not an entity
+ * read — and that independence is a claim worth testing rather than asserting.
+ *
+ * So these tests exist to keep the guarantee from resting on a config flag. Flipping
+ * `open-in-view` back on — a plausible future change, and one nobody would think to re-derive the
+ * concurrency argument for — cannot silently break the trail checks while this class passes. It is
+ * small on purpose: not a second copy of the capture suite, only the parts whose correctness could
  * plausibly depend on whether the persistence context is request-scoped.
  */
 @TestPropertySource(properties = ["spring.jpa.open-in-view=true"])

@@ -24,6 +24,10 @@ interface WeatherEventRepository : JpaRepository<WeatherEvent, UUID> {
         validationStatus: ValidationStatus
     ): List<WeatherEvent>
 
+    fun countByUserId(userId: UUID): Long
+
+    fun countByUserIdAndValidationStatus(userId: UUID, validationStatus: ValidationStatus): Long
+
     // Filters explicitly on CONFIRMED rather than relying on the invariant that non-CONFIRMED
     // rows always carry xpAwarded = 0 (enforced by CaptureValidationService/CaptureCommitService,
     // neither of which this query can see). That invariant living elsewhere is exactly why a

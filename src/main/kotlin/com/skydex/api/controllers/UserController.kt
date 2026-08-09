@@ -1,11 +1,13 @@
 package com.skydex.api.controllers
 
+import com.skydex.api.dto.ProfileResponse
 import com.skydex.api.dto.UpdateProfileRequest
 import com.skydex.api.dto.UserResponse
 import com.skydex.api.errors.ConflictException
 import com.skydex.api.models.User
 import com.skydex.api.repositories.UserRepository
 import com.skydex.api.repositories.WeatherEventRepository
+import com.skydex.api.services.ProfileService
 import jakarta.validation.Valid
 import org.springframework.http.ResponseEntity
 import org.springframework.security.core.annotation.AuthenticationPrincipal
@@ -21,12 +23,17 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/users")
 class UserController(
     private val users: UserRepository,
-    private val events: WeatherEventRepository
+    private val events: WeatherEventRepository,
+    private val profiles: ProfileService
 ) {
 
     @GetMapping("/me")
     fun me(@AuthenticationPrincipal currentUser: User): UserResponse =
         UserResponse.from(currentUser)
+
+    @GetMapping("/me/profile")
+    fun myProfile(@AuthenticationPrincipal currentUser: User): ProfileResponse =
+        profiles.forUser(currentUser)
 
     @PutMapping("/me")
     fun updateMe(

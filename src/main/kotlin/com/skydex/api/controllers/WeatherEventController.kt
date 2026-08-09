@@ -10,6 +10,7 @@ import com.skydex.api.models.WeatherEvent
 import com.skydex.api.repositories.UserRepository
 import com.skydex.api.repositories.WeatherEventRepository
 import com.skydex.api.services.BadUploadException
+import com.skydex.api.services.BadgeService
 import com.skydex.api.services.CaptureCommitService
 import com.skydex.api.services.CaptureValidationService
 import com.skydex.api.services.PhotoProvenanceService
@@ -41,7 +42,8 @@ class WeatherEventController(
     // Read-side only. `photo_url` is persisted relative so a stored row never carries a host that
     // can go stale; the absolute URL is composed on the way out by `WeatherEventResponse.from`,
     // which takes this as a required third argument. Nothing on the write path may use it.
-    @Value("\${skydex.photos.public-base-url}") private val publicBaseUrl: String
+    @Value("\${skydex.photos.public-base-url}") private val publicBaseUrl: String,
+    private val badges: BadgeService
 ) {
 
     @PostMapping
@@ -100,6 +102,11 @@ class WeatherEventController(
             photoId = photo.id!!,
             now = capturedAt
         )
+
+        // Persist any badge this capture just unlocked. The response shape is unchanged —
+        // the user sees new badges on the Profile screen, which marks recent ones as new.
+        badges.syncFor(currentUser)
+
         return ResponseEntity.status(HttpStatus.CREATED)
             .body(WeatherEventResponse.from(saved, currentUser, publicBaseUrl))
     }

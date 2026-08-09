@@ -1,6 +1,7 @@
 package com.skydex.api.controllers
 
 import com.skydex.api.dto.ErrorResponse
+import com.skydex.api.errors.BadRequestException
 import com.skydex.api.errors.ConflictException
 import com.skydex.api.errors.ForbiddenException
 import com.skydex.api.errors.NotFoundException
@@ -30,6 +31,10 @@ class GlobalExceptionHandler {
     @ExceptionHandler(BadUploadException::class)
     fun handleBadUpload(e: BadUploadException): ResponseEntity<ErrorResponse> =
         ResponseEntity.badRequest().body(ErrorResponse(e.message ?: "Invalid upload"))
+
+    @ExceptionHandler(BadRequestException::class)
+    fun handleBadRequest(e: BadRequestException): ResponseEntity<ErrorResponse> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ErrorResponse(e.message ?: "Bad request"))
 
     @ExceptionHandler(MethodArgumentNotValidException::class)
     fun handleValidation(e: MethodArgumentNotValidException): ResponseEntity<ErrorResponse> {

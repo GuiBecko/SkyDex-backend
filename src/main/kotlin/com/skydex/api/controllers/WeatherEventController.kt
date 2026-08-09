@@ -10,6 +10,7 @@ import com.skydex.api.models.WeatherEvent
 import com.skydex.api.repositories.UserRepository
 import com.skydex.api.repositories.WeatherEventRepository
 import com.skydex.api.services.BadUploadException
+import com.skydex.api.services.CaptureCommitService
 import com.skydex.api.services.CaptureValidationService
 import com.skydex.api.services.PhotoProvenanceService
 import jakarta.validation.Valid
@@ -35,6 +36,7 @@ class WeatherEventController(
     private val users: UserRepository,
     private val validation: CaptureValidationService,
     private val photoProvenance: PhotoProvenanceService,
+    private val captureCommit: CaptureCommitService,
     // Read-side only. `photo_url` is persisted relative so a stored row never carries a host that
     // can go stale; the absolute URL is composed on the way out by `WeatherEventResponse.from`,
     // which takes this as a required third argument. Nothing on the write path may use it.
@@ -55,9 +57,10 @@ class WeatherEventController(
         // UNCONFIRMED" bug. The client never supplies this; see Task 6.
         val capturedAt = Instant.now()
 
-        // Claimed before validation, on the same stamp handed to it below: a photo that is not
-        // the caller's own, already spent, or expired costs no Open-Meteo call at all.
-        photoProvenance.claim(request.photoUrl, currentUser.id!!, capturedAt)
+        // Checked before validation, on the same stamp handed to it below: a photo that is not
+        // the caller's own, already spent, or expired costs no Open-Meteo call at all. This is a
+        // read; the photo is not spent until the commit below, after scoring.
+        val photo = photoProvenance.verify(request.photoUrl, currentUser.id!!, capturedAt)
 
         val result = validation.validate(
             claimed = claimed,
@@ -66,12 +69,22 @@ class WeatherEventController(
             capturedAt = capturedAt
         )
 
-        val saved = events.save(
+        // Spending the photo and inserting the capture are one transaction, and they come AFTER
+        // the Open-Meteo call so that no database connection is held across it. The conditional
+        // update inside is what actually enforces single use: verify() above cannot, because
+        // between its read and this write sits a network round trip that two concurrent requests
+        // can both be inside of.
+        val saved = captureCommit.commit(
             WeatherEvent(
                 id = null,
                 title = request.title,
                 description = request.description,
-                photoUrl = request.photoUrl,
+                // Rebuilt from the row that was verified, not echoed from the request. The two are
+                // identical today only because the @Pattern on photoUrl forbids `/` in the
+                // filename — a regex three layers away from here. Loosen it (a subdirectory, a
+                // size-variant suffix) and echoing the request would let a capture be scored
+                // against one photo and stored pointing at another.
+                photoUrl = "/api/photos/${photo.filename}",
                 capturedAt = capturedAt,
                 latitude = request.latitude,
                 longitude = request.longitude,
@@ -80,7 +93,9 @@ class WeatherEventController(
                 observedWeatherCode = result.observedWeatherCode,
                 xpAwarded = result.xpAwarded,
                 userId = currentUser.id!!
-            )
+            ),
+            photoId = photo.id!!,
+            now = capturedAt
         )
         return ResponseEntity.status(HttpStatus.CREATED)
             .body(WeatherEventResponse.from(saved, currentUser, publicBaseUrl))

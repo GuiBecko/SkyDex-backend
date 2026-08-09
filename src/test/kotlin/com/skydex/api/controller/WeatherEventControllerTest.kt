@@ -20,6 +20,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentMatchers.anyDouble
 import org.mockito.Mockito.never
+import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
 import org.springframework.boot.test.mock.mockito.MockBean
@@ -651,13 +652,19 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     }
 
     @Test
-    fun `rejects a phenomenon that is not in the catalog`() {
+    fun `rejects a phenomenon that is not in the catalog without consuming the photo`() {
         val user = persistUser(email = "inventor@skydex.com")
+        // A real, valid, unspent photo of this user's, so the rejection can only come from the
+        // phenomenon. It also makes the rule explicit rather than incidental: a request thrown out
+        // for something unrelated to the photo must give the photo back, which today holds because
+        // the phenomenon parse sits above the provenance check in `create` and nothing else pinned
+        // that ordering.
+        val photo = persistUploadedPhoto(user)
 
         val payload = CreateWeatherEventRequest(
             title = "Chuva de sapos",
             description = "Aconteceu mesmo",
-            photoUrl = "/api/photos/frogs.jpg",
+            photoUrl = "/api/photos/${photo.filename}",
             latitude = -30.0346,
             longitude = -51.2177,
             phenomenon = "FROG_RAIN"
@@ -671,6 +678,11 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         )
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("Unknown phenomenon: FROG_RAIN"))
+
+        assertNull(
+            uploadedPhotoRepository.findByFilename(photo.filename)!!.consumedAt,
+            "a request rejected for its phenomenon burnt the caller's photo"
+        )
     }
 
     @Test
@@ -783,9 +795,12 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     }
 
     /**
-     * Deliberately the SAME message as the test above. Telling "no such photo" apart from "not
-     * yours" would make this endpoint an oracle for which filenames exist on the server, which is
-     * exactly the enumeration the random filenames are meant to prevent.
+     * Deliberately the SAME message as the test above, and the property it protects is OWNERSHIP
+     * PRIVACY rather than the secrecy of the filename. Which files exist is already public: the
+     * GET side of the photos endpoint is permitAll, so anyone can probe a path unauthenticated and
+     * read existence off 200 versus 404. What splitting the message would newly disclose is
+     * *whose* a photo is — an authenticated user could sweep paths scraped from a feed and sort
+     * them into "nobody's" and "somebody's". One message keeps that unanswerable.
      */
     @Test
     fun `refuses a capture citing a filename no upload backs, with the same message`() {
@@ -798,6 +813,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("Photo is not available for this capture"))
 
+        verify(openMeteoClient, never()).fetchHourlyForecast(anyDouble(), anyDouble())
         assertEquals(0L, weatherEventRepository.count())
     }
 
@@ -828,6 +844,9 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("This photo has already been used for a capture"))
 
+        // Exactly one upstream call in the whole test, i.e. the first POST's. The rejection is
+        // decided by verify(), above the Open-Meteo call, so the second POST spent nothing.
+        verify(openMeteoClient, times(1)).fetchHourlyForecast(anyDouble(), anyDouble())
         assertEquals(1L, weatherEventRepository.count())
     }
 
@@ -846,6 +865,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.error").value("Photo has expired; take a new one"))
 
+        verify(openMeteoClient, never()).fetchHourlyForecast(anyDouble(), anyDouble())
         assertEquals(0L, weatherEventRepository.count())
     }
 

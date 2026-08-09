@@ -127,36 +127,6 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     }
 
     @Test
-    fun `finds an event by id and returns 200`() {
-        val event = persistEvent(owner = testUser, title = "Aurora Borealis", description = "lights", photoUrl = "/api/photos/photo1.jpg")
-
-        mockMvc.perform(
-            get("/api/events/{id}", event.id!!)
-                .header("Authorization", authHeader)
-                .contentType(MediaType.APPLICATION_JSON)
-        )
-            .andExpect(status().isOk)
-            .andExpect(jsonPath("$.id").value(event.id.toString()))
-            .andExpect(jsonPath("$.title").value("Aurora Borealis"))
-    }
-
-    @Test
-    fun `getById reports the event's real author, not the caller`() {
-        val owner = persistUser(name = "Real Owner", email = "real-owner@skydex.com")
-        val caller = persistUser(name = "Curious Caller", email = "curious-caller@skydex.com")
-        val event = persistEvent(owner = owner, title = "Someone else's storm")
-
-        mockMvc.perform(
-            get("/api/events/{id}", event.id!!)
-                .header("Authorization", authHeaderFor(caller))
-                .contentType(MediaType.APPLICATION_JSON)
-        )
-            .andExpect(status().isOk)
-            .andExpect(jsonPath("$.userId").value(owner.id.toString()))
-            .andExpect(jsonPath("$.authorName").value("Real Owner"))
-    }
-
-    @Test
     fun `updates an existing event and returns 200`() {
         val event = persistEvent(owner = testUser, title = "Old Title", description = "Old description", photoUrl = "/api/photos/url1.jpg")
 
@@ -232,10 +202,8 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         assertFalse(stored.photoUrl.contains("://"), "a host was persisted: ${stored.photoUrl}")
 
         // ...and every read endpoint still hands the client something it can actually fetch.
-        mockMvc.perform(get("/api/events/{id}", id).header("Authorization", authHeader))
-            .andExpect(status().isOk)
-            .andExpect(jsonPath("$.photoUrl").value("http://localhost:8080$relativeUrl"))
-
+        // (`GET /api/events/{id}` was a third such endpoint until it was removed for exposing
+        // strangers' captures; `/mine` and the create response above cover the same composition.)
         mockMvc.perform(get("/api/events/mine").header("Authorization", authHeader))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$[0].photoUrl").value("http://localhost:8080$relativeUrl"))
@@ -284,16 +252,37 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         assert(!stillExists)
     }
 
+    /**
+     * `GET /api/events/{id}` is gone, on purpose, and this is what keeps it gone.
+     *
+     * It used to serve any capture to any authenticated caller — a stranger's exact coordinates,
+     * capture time and photo URL — which is the opposite of the friends-only model Task 16 built
+     * for the feed. It was removed rather than scoped, because nothing consumed it.
+     *
+     * The expected status is **405, not 404**, and the distinction is the assertion's whole value.
+     * `PUT` and `DELETE` still map that path, so Spring matches the pattern, finds no `GET` among
+     * its methods and reports method-not-allowed. A 404 here would mean the path stopped matching
+     * altogether; a 200 would mean someone put the handler back. This test therefore also pins
+     * that `GlobalExceptionHandler`'s catch-all does not swallow Spring's own dispatch exceptions
+     * and turn a routing decision into a 500.
+     *
+     * The event is real and owned by the caller, so nothing but the absent route can produce the
+     * refusal — an unknown id would have been refused by a live handler too, and would have
+     * passed against the code this test exists to reject.
+     */
     @Test
-    fun `returns 404 Not Found when looking up an id that does not exist`() {
-        val unknownId = UUID.randomUUID()
+    fun `does not expose a capture by id`() {
+        val event = persistEvent(owner = testUser, title = "Aurora Borealis", description = "lights")
 
-        mockMvc.perform(
-            get("/api/events/{id}", unknownId)
+        val body = mockMvc.perform(
+            get("/api/events/{id}", event.id!!)
                 .header("Authorization", authHeader)
                 .contentType(MediaType.APPLICATION_JSON)
         )
-            .andExpect(status().isNotFound)
+            .andExpect(status().isMethodNotAllowed)
+            .andReturn().response.contentAsString
+
+        assertFalse(body.contains("Aurora Borealis"), "the removed endpoint still served a capture")
     }
 
     @Test

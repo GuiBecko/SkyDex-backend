@@ -7,7 +7,6 @@ import com.skydex.api.errors.ForbiddenException
 import com.skydex.api.errors.NotFoundException
 import com.skydex.api.models.User
 import com.skydex.api.models.WeatherEvent
-import com.skydex.api.repositories.UserRepository
 import com.skydex.api.repositories.WeatherEventRepository
 import com.skydex.api.services.BadUploadException
 import com.skydex.api.services.BadgeService
@@ -35,7 +34,6 @@ import java.util.UUID
 @RequestMapping("/api/events")
 class WeatherEventController(
     private val events: WeatherEventRepository,
-    private val users: UserRepository,
     private val validation: CaptureValidationService,
     private val photoProvenance: PhotoProvenanceService,
     private val captureCommit: CaptureCommitService,
@@ -119,14 +117,12 @@ class WeatherEventController(
         )
     }
 
-    @GetMapping("/{id}")
-    fun getById(@PathVariable id: UUID): WeatherEventResponse {
-        val event = events.findById(id).orElseThrow { NotFoundException("Capture not found") }
-        // Author comes from the event, never from the caller: this endpoint has no ownership
-        // restriction, so the two genuinely differ here. The test below pins that.
-        val author = users.findById(event.userId).orElseThrow { NotFoundException("Capture not found") }
-        return WeatherEventResponse.from(event, author, publicBaseUrl)
-    }
+    // There is deliberately no `GET /{id}`. It used to exist and let any authenticated user read
+    // any capture — a stranger's exact latitude, longitude, capture time and photo URL — which
+    // contradicts the friends-only visibility model Task 16 established for the feed. Nothing
+    // consumed it: the Android client reads captures through `/mine` and `/api/feed` only. A
+    // capture is reachable through those two endpoints, both of which scope by viewer; do not
+    // reintroduce an unscoped one. `WeatherEventControllerTest` pins its absence.
 
     @PutMapping("/{id}")
     fun update(

@@ -71,7 +71,12 @@ class CaptureValidationService(private val openMeteoClient: OpenMeteoClient) {
         ValidationResult(ValidationStatus.UNCONFIRMED, observedCode, 0)
 
     private companion object {
-        /** Covers hourly granularity plus a plausible amount of phone clock skew. */
+        /**
+         * Covers hourly granularity plus slack for a truncated or gap-ridden upstream response —
+         * NOT phone clock skew. There is no phone clock in this path: [capturedAt] is stamped by
+         * the server (`WeatherEventController.create` reads `Instant.now()` once, before this is
+         * ever called), so a client's clock can never influence it.
+         */
         val MAX_SKEW: Duration = Duration.ofMinutes(90)
     }
 }

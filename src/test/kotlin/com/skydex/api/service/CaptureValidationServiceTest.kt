@@ -115,4 +115,89 @@ class CaptureValidationServiceTest {
         assertEquals(null, result.observedWeatherCode)
         assertEquals(0, result.xpAwarded)
     }
+
+    /**
+     * The concrete risk this guards: `minOf(hourly.time.size, hourly.weatherCode.size)` becoming
+     * `maxOf` would walk past the shorter list's end and let an `IndexOutOfBoundsException` escape
+     * `validate` — turning an upstream that truncated one array (but not the other) into a 500 that
+     * loses the user's capture, instead of the UNCONFIRMED result `validate`'s own contract
+     * promises. `time` here is longer than `weatherCode` on purpose, built directly rather than
+     * through the `forecast` helper, which always keeps the two lists the same length.
+     */
+    @Test
+    fun `does not throw when the hourly arrays have mismatched lengths`() {
+        `when`(client.fetchHourlyForecast(-30.0, -51.0)).thenReturn(
+            OpenMeteoResponse(
+                latitude = -30.0,
+                longitude = -51.0,
+                hourly = HourlyData(
+                    time = listOf("2026-08-07T14:00", "2026-08-07T15:00", "2026-08-07T16:00"),
+                    temperatureCelsius = listOf(20.0, 20.0, 20.0),
+                    weatherCode = listOf(95)
+                )
+            )
+        )
+
+        val result = service.validate(
+            claimed = Phenomenon.THUNDERSTORM,
+            latitude = -30.0,
+            longitude = -51.0,
+            capturedAt = Instant.parse("2026-08-07T14:10:00Z")
+        )
+
+        assertEquals(ValidationStatus.CONFIRMED, result.status)
+        assertEquals(95, result.observedWeatherCode)
+    }
+
+    @Test
+    fun `skips a slot whose timestamp cannot be parsed instead of throwing`() {
+        `when`(client.fetchHourlyForecast(-30.0, -51.0)).thenReturn(
+            forecast("not-a-timestamp" to 95)
+        )
+
+        val result = service.validate(
+            claimed = Phenomenon.THUNDERSTORM,
+            latitude = -30.0,
+            longitude = -51.0,
+            capturedAt = Instant.parse("2026-08-07T14:10:00Z")
+        )
+
+        assertEquals(ValidationStatus.UNCONFIRMED, result.status)
+        assertEquals(null, result.observedWeatherCode)
+        assertEquals(0, result.xpAwarded)
+    }
+
+    @Test
+    fun `does not confirm when the nearest slot's weather code is null`() {
+        `when`(client.fetchHourlyForecast(-30.0, -51.0)).thenReturn(
+            forecast("2026-08-07T14:00" to null)
+        )
+
+        val result = service.validate(
+            claimed = Phenomenon.THUNDERSTORM,
+            latitude = -30.0,
+            longitude = -51.0,
+            capturedAt = Instant.parse("2026-08-07T14:10:00Z")
+        )
+
+        assertEquals(ValidationStatus.UNCONFIRMED, result.status)
+        assertEquals(null, result.observedWeatherCode)
+        assertEquals(0, result.xpAwarded)
+    }
+
+    @Test
+    fun `treats an empty hourly block as unconfirmed rather than throwing`() {
+        `when`(client.fetchHourlyForecast(-30.0, -51.0)).thenReturn(forecast())
+
+        val result = service.validate(
+            claimed = Phenomenon.THUNDERSTORM,
+            latitude = -30.0,
+            longitude = -51.0,
+            capturedAt = Instant.parse("2026-08-07T14:10:00Z")
+        )
+
+        assertEquals(ValidationStatus.UNCONFIRMED, result.status)
+        assertEquals(null, result.observedWeatherCode)
+        assertEquals(0, result.xpAwarded)
+    }
 }

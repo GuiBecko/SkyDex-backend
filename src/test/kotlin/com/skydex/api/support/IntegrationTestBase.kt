@@ -1,6 +1,7 @@
 package com.skydex.api.support
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.skydex.api.repositories.UploadedPhotoRepository
 import com.skydex.api.repositories.UserRepository
 import com.skydex.api.repositories.WeatherEventRepository
 import com.skydex.api.security.TokenService
@@ -32,6 +33,9 @@ abstract class IntegrationTestBase {
     internal lateinit var weatherEventRepository: WeatherEventRepository
 
     @Autowired
+    internal lateinit var uploadedPhotoRepository: UploadedPhotoRepository
+
+    @Autowired
     internal lateinit var passwordEncoder: PasswordEncoder
 
     @Autowired
@@ -40,6 +44,7 @@ abstract class IntegrationTestBase {
     @BeforeEach
     fun clearDatabase() {
         weatherEventRepository.deleteAll()
+        uploadedPhotoRepository.deleteAll()
         userRepository.deleteAll()
     }
 }

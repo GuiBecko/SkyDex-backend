@@ -3,7 +3,10 @@ package com.skydex.api.controller
 import com.skydex.api.support.IntegrationTestBase
 import com.skydex.api.support.authHeaderFor
 import com.skydex.api.support.persistUser
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.http.MediaType
@@ -48,6 +51,29 @@ class PhotoControllerTest : IntegrationTestBase() {
             // These bytes came from a client, so the browser must never be allowed to sniff a
             // content type out of them and render whatever it decides they are.
             .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+    }
+
+    @Test
+    fun `records the upload against the caller so a capture can later cite it`() {
+        val user = persistUser(email = "provenance@skydex.com")
+        val part = MockMultipartFile("file", "storm.jpg", MediaType.IMAGE_JPEG_VALUE, jpegBytes)
+
+        val body = mockMvc.perform(
+            multipart("/api/photos").file(part).header("Authorization", authHeaderFor(user))
+        )
+            .andExpect(status().isCreated)
+            .andReturn().response.contentAsString
+
+        val photoUrl = objectMapper.readTree(body).get("photoUrl").asText()
+        // The row is keyed by the bare filename, not the path, because that is what
+        // PhotoProvenanceService.claim derives from the photoUrl a capture cites.
+        val filename = photoUrl.substringAfterLast('/')
+
+        val recorded = uploadedPhotoRepository.findByFilename(filename)
+        assertNotNull(recorded, "no UploadedPhoto row was written for $photoUrl")
+        assertEquals(user.id, recorded!!.uploaderId, "the upload was recorded against the wrong user")
+        // Nothing has spent it yet: a fresh upload must be claimable by a capture.
+        assertNull(recorded.consumedAt, "a brand-new upload was already marked as spent")
     }
 
     @Test

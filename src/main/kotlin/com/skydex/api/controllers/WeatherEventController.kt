@@ -11,6 +11,7 @@ import com.skydex.api.repositories.UserRepository
 import com.skydex.api.repositories.WeatherEventRepository
 import com.skydex.api.services.BadUploadException
 import com.skydex.api.services.CaptureValidationService
+import com.skydex.api.services.PhotoProvenanceService
 import jakarta.validation.Valid
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.HttpStatus
@@ -33,6 +34,7 @@ class WeatherEventController(
     private val events: WeatherEventRepository,
     private val users: UserRepository,
     private val validation: CaptureValidationService,
+    private val photoProvenance: PhotoProvenanceService,
     // Read-side only. `photo_url` is persisted relative so a stored row never carries a host that
     // can go stale; the absolute URL is composed on the way out by `WeatherEventResponse.from`,
     // which takes this as a required third argument. Nothing on the write path may use it.
@@ -52,6 +54,10 @@ class WeatherEventController(
         // then not recorded in — rare, but it would be an unreproducible "why is this
         // UNCONFIRMED" bug. The client never supplies this; see Task 6.
         val capturedAt = Instant.now()
+
+        // Claimed before validation, on the same stamp handed to it below: a photo that is not
+        // the caller's own, already spent, or expired costs no Open-Meteo call at all.
+        photoProvenance.claim(request.photoUrl, currentUser.id!!, capturedAt)
 
         val result = validation.validate(
             claimed = claimed,
@@ -109,16 +115,22 @@ class WeatherEventController(
         }
         event.title = request.title
         event.description = request.description
-        event.photoUrl = request.photoUrl
-        // Neither capturedAt NOR the coordinates are updated here, and for one reason: Task 12
-        // scores a capture against the real weather at an instant AND a place. Freezing the time
-        // while leaving the pin editable just moves the cheat one axis over — create a capture
-        // now, find where a storm is happening at that frozen instant, PUT the coordinates there,
-        // collect the rare badge. Nothing legitimate is lost: the coordinates are client-supplied
-        // at creation because the server cannot see the phone, and letting them move afterwards
-        // only buys a second, better-informed attempt.
-        // `CreateWeatherEventRequest` still carries latitude/longitude, and this handler silently
-        // ignores them — the same shape as capturedAt, and pinned by the test below.
+        // Neither capturedAt, the coordinates, NOR (as of Task 12b) photoUrl are updated here, and
+        // for related reasons. Task 12 scores a capture against the real weather at an instant AND
+        // a place. Freezing the time while leaving the pin editable just moves the cheat one axis
+        // over — create a capture now, find where a storm is happening at that frozen instant, PUT
+        // the coordinates there, collect the rare badge. Nothing legitimate is lost: the
+        // coordinates are client-supplied at creation because the server cannot see the phone, and
+        // letting them move afterwards only buys a second, better-informed attempt.
+        // photoUrl joins the same pattern one step earlier in the chain: Task 12b makes creation
+        // bind a capture to a real, fresh, single-use photo the caller uploaded, via
+        // PhotoProvenanceService.claim. Leaving photoUrl editable here would let a capture be
+        // scored against that photo and then have the evidence swapped for something else
+        // afterwards — the update path never calls claim, so a swapped-in photo would not even
+        // need to be the caller's own.
+        // `CreateWeatherEventRequest` still carries latitude, longitude AND photoUrl, and this
+        // handler silently ignores all three — the same accepted-and-ignored shape as capturedAt,
+        // and pinned by the tests below.
         // Safe to pass currentUser as the author ONLY because the guard above proves
         // currentUser.id == event.userId. If that guard is ever relaxed — a moderator edit, a
         // shared album — this must go back to looking the author up from event.userId, or the

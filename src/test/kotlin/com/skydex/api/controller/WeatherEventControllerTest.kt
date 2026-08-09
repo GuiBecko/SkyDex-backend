@@ -9,12 +9,18 @@ import com.skydex.api.services.OpenMeteoClient
 import com.skydex.api.support.IntegrationTestBase
 import com.skydex.api.support.authHeaderFor
 import com.skydex.api.support.persistEvent
+import com.skydex.api.support.persistUploadedPhoto
 import com.skydex.api.support.persistUser
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.ArgumentMatchers.anyDouble
+import org.mockito.Mockito.never
+import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
 import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.http.MediaType
@@ -47,12 +53,23 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         authHeader = authHeaderFor(testUser)
     }
 
+    /**
+     * The `/api/photos/<name>` path of a photo [owner] just uploaded, recorded exactly as
+     * `POST /api/photos` would have. Since Task 12b, `POST /api/events` refuses any photoUrl no
+     * `UploadedPhoto` row of the caller's backs, so every create-path test needs one of these.
+     *
+     * [uploadedAt] defaults to now and the age fixtures below are all offsets from `Instant.now()`:
+     * a literal date here would silently drift past MAX_AGE and turn these tests into a clock.
+     */
+    private fun freshPhotoFor(owner: User, uploadedAt: Instant = Instant.now()): String =
+        "/api/photos/" + persistUploadedPhoto(owner, uploadedAt = uploadedAt).filename
+
     @Test
     fun `registers a new event and returns 201 with a generated id`() {
         val request = CreateWeatherEventRequest(
             title = "Aurora Borealis",
             description = "Bright green lights in the night sky.",
-            photoUrl = "/api/photos/aurora.jpg",
+            photoUrl = freshPhotoFor(testUser),
             latitude = -23.55,
             longitude = -46.63,
             phenomenon = "RAIN"
@@ -156,7 +173,9 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         )
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.title").value("Tornado Confirmed"))
-            .andExpect(jsonPath("$.photoUrl").value("http://localhost:8080/api/photos/url2.jpg"))
+            // url1, not url2: since Task 12b photoUrl is frozen after creation, so the request's
+            // url2 is accepted and ignored. The dedicated test below owns that property.
+            .andExpect(jsonPath("$.photoUrl").value("http://localhost:8080/api/photos/url1.jpg"))
     }
 
     /**
@@ -223,6 +242,9 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     fun `update returns an absolute photo url while persisting the relative one`() {
         val event = persistEvent(owner = testUser, title = "Old", description = "Old", photoUrl = "/api/photos/old.jpg")
 
+        // The photoUrl this sends is ignored (frozen since Task 12b); what is under test here is
+        // that the update RESPONSE composes the stored relative path into an absolute one, the
+        // same as the other three response sites.
         val request = CreateWeatherEventRequest(
             title = "New",
             description = "New description",
@@ -239,9 +261,9 @@ class WeatherEventControllerTest : IntegrationTestBase() {
                 .content(objectMapper.writeValueAsString(request))
         )
             .andExpect(status().isOk)
-            .andExpect(jsonPath("$.photoUrl").value("http://localhost:8080/api/photos/new.jpg"))
+            .andExpect(jsonPath("$.photoUrl").value("http://localhost:8080/api/photos/old.jpg"))
 
-        assertEquals("/api/photos/new.jpg", weatherEventRepository.findById(event.id!!).orElseThrow().photoUrl)
+        assertEquals("/api/photos/old.jpg", weatherEventRepository.findById(event.id!!).orElseThrow().photoUrl)
     }
 
     @Test
@@ -337,7 +359,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         val payload = CreateWeatherEventRequest(
             title = "Tempestade",
             description = "Raios sobre o bairro",
-            photoUrl = "/api/photos/storm.jpg",
+            photoUrl = freshPhotoFor(user),
             latitude = -30.0346,
             longitude = -51.2177,
             phenomenon = "RAIN"
@@ -428,7 +450,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         val payload = CreateWeatherEventRequest(
             title = "Deserto",
             description = "Ceu limpo a perder de vista",
-            photoUrl = "/api/photos/x.jpg",
+            photoUrl = freshPhotoFor(user),
             latitude = -25.0,
             longitude = 120.0,
             phenomenon = "RAIN"
@@ -526,8 +548,11 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         // could look up yesterday's thunderstorm and farm "Pé de Raio" without seeing a storm.
         // Jackson ignores unknown properties by default; this pins that the value is discarded
         // rather than honoured.
+        // The photoUrl is interpolated rather than literal because this request is hand-built:
+        // since Task 12b it must name a real, fresh, unspent upload of this caller's, and no
+        // compiler will point here when that stops being true.
         val backdated = """
-            {"title":"Ontem","description":"Faz de conta","photoUrl":"/api/photos/x.jpg",
+            {"title":"Ontem","description":"Faz de conta","photoUrl":"${freshPhotoFor(user)}",
              "latitude":0.0,"longitude":0.0,"capturedAt":"2020-01-01T00:00:00Z","phenomenon":"RAIN"}
         """.trimIndent()
 
@@ -571,7 +596,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         val payload = CreateWeatherEventRequest(
             title = "Tempestade",
             description = "Raios sobre o bairro",
-            photoUrl = "/api/photos/storm.jpg",
+            photoUrl = freshPhotoFor(user),
             latitude = -30.0346,
             longitude = -51.2177,
             phenomenon = "THUNDERSTORM"
@@ -608,7 +633,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         val payload = CreateWeatherEventRequest(
             title = "Granizo (eu juro)",
             description = "Pedras do tamanho de bolas de golfe",
-            photoUrl = "/api/photos/hail.jpg",
+            photoUrl = freshPhotoFor(user),
             latitude = -30.0346,
             longitude = -51.2177,
             phenomenon = "HAILSTORM"
@@ -696,5 +721,180 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             .andExpect(jsonPath("$.title").value("Titulo novo"))
             .andExpect(jsonPath("$.validationStatus").value("UNCONFIRMED"))
             .andExpect(jsonPath("$.xpAwarded").value(0))
+    }
+
+    // --- Task 12b: a capture must cite a photo the caller actually took -------------------------
+
+    /** Builds the JSON for a create request citing [photoUrl]; the rest is deliberately boring. */
+    private fun captureCiting(photoUrl: String): String = objectMapper.writeValueAsString(
+        CreateWeatherEventRequest(
+            title = "Chuva",
+            description = "Pingos grossos",
+            photoUrl = photoUrl,
+            latitude = -30.0346,
+            longitude = -51.2177,
+            phenomenon = "RAIN"
+        )
+    )
+
+    @Test
+    fun `accepts a capture citing a photo the caller just uploaded and marks it spent`() {
+        val photo = persistUploadedPhoto(testUser)
+
+        mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeader)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(captureCiting("/api/photos/${photo.filename}"))
+        )
+            .andExpect(status().isCreated)
+
+        // A photo is single-use, and this stamp is the whole mechanism: it is what makes the
+        // second citation of the same filename fail below.
+        val spent = uploadedPhotoRepository.findByFilename(photo.filename)
+        assertNotNull(spent, "the upload row vanished")
+        assertNotNull(spent!!.consumedAt, "the capture did not mark the photo it cited as spent")
+    }
+
+    /**
+     * The core of the task: the photos directory is one shared namespace, so without an ownership
+     * check any authenticated user could scrape a friend's photo path out of a feed response and
+     * submit it as their own capture.
+     */
+    @Test
+    fun `refuses a capture citing another user's photo`() {
+        val stranger = persistUser(email = "stranger@skydex.com")
+        val theirPhoto = persistUploadedPhoto(stranger)
+
+        mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeader)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(captureCiting("/api/photos/${theirPhoto.filename}"))
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("Photo is not available for this capture"))
+
+        // Rejected before validation, so a bad photo costs no upstream call at all.
+        verify(openMeteoClient, never()).fetchHourlyForecast(anyDouble(), anyDouble())
+        // And it did not consume someone else's photo on the way out.
+        assertNull(uploadedPhotoRepository.findByFilename(theirPhoto.filename)!!.consumedAt)
+        assertEquals(0L, weatherEventRepository.count())
+    }
+
+    /**
+     * Deliberately the SAME message as the test above. Telling "no such photo" apart from "not
+     * yours" would make this endpoint an oracle for which filenames exist on the server, which is
+     * exactly the enumeration the random filenames are meant to prevent.
+     */
+    @Test
+    fun `refuses a capture citing a filename no upload backs, with the same message`() {
+        mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeader)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(captureCiting("/api/photos/${UUID.randomUUID()}.jpg"))
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("Photo is not available for this capture"))
+
+        assertEquals(0L, weatherEventRepository.count())
+    }
+
+    /**
+     * Already-spent and expired are the caller's OWN photos, so a specific message leaks nothing
+     * and tells them something actionable.
+     */
+    @Test
+    fun `refuses a capture citing a photo an earlier capture already spent`() {
+        val photo = persistUploadedPhoto(testUser)
+        val body = captureCiting("/api/photos/${photo.filename}")
+
+        mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeader)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body)
+        )
+            .andExpect(status().isCreated)
+
+        // Same photo, second capture. Otherwise one lucky shot could be farmed into a whole album.
+        mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeader)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body)
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("This photo has already been used for a capture"))
+
+        assertEquals(1L, weatherEventRepository.count())
+    }
+
+    @Test
+    fun `refuses a capture citing a photo uploaded thirty-one minutes ago`() {
+        // MAX_AGE is 30 minutes, and this offset is taken from Instant.now() rather than written
+        // as a date: a literal would drift past the limit on its own and pass for the wrong reason.
+        val stale = persistUploadedPhoto(testUser, uploadedAt = Instant.now().minus(31, ChronoUnit.MINUTES))
+
+        mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeader)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(captureCiting("/api/photos/${stale.filename}"))
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("Photo has expired; take a new one"))
+
+        assertEquals(0L, weatherEventRepository.count())
+    }
+
+    /** The freshness window is generous on purpose — a slow upload must not cost the capture. */
+    @Test
+    fun `accepts a capture citing a photo uploaded twenty-nine minutes ago`() {
+        val nearlyStale = persistUploadedPhoto(testUser, uploadedAt = Instant.now().minus(29, ChronoUnit.MINUTES))
+
+        mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeader)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(captureCiting("/api/photos/${nearlyStale.filename}"))
+        )
+            .andExpect(status().isCreated)
+    }
+
+    /**
+     * photoUrl joins capturedAt, the coordinates and the score as frozen after creation. The
+     * update path never calls `claim`, so an editable photoUrl would let a capture be scored
+     * against a real photo and then have the evidence swapped for anything at all afterwards —
+     * including a photo that is not the caller's.
+     */
+    @Test
+    fun `ignores a photo url supplied on update`() {
+        val event = persistEvent(owner = testUser, photoUrl = "/api/photos/original.jpg")
+        val substitute = persistUploadedPhoto(testUser)
+
+        val payload = CreateWeatherEventRequest(
+            title = "Editado",
+            description = "So o texto mudou",
+            photoUrl = "/api/photos/${substitute.filename}",
+            latitude = -23.55,
+            longitude = -46.63,
+            phenomenon = "RAIN"
+        )
+
+        mockMvc.perform(
+            put("/api/events/{id}", event.id!!)
+                .header("Authorization", authHeader)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload))
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.title").value("Editado"))
+            .andExpect(jsonPath("$.photoUrl").value("http://localhost:8080/api/photos/original.jpg"))
+
+        assertEquals("/api/photos/original.jpg", weatherEventRepository.findById(event.id!!).orElseThrow().photoUrl)
+        // Accepted and ignored, not claimed: update must not spend the photo it was handed either.
+        assertNull(uploadedPhotoRepository.findByFilename(substitute.filename)!!.consumedAt)
     }
 }

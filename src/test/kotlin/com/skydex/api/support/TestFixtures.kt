@@ -2,6 +2,7 @@ package com.skydex.api.support
 
 import com.skydex.api.domain.Phenomenon
 import com.skydex.api.domain.ValidationStatus
+import com.skydex.api.models.UploadedPhoto
 import com.skydex.api.models.User
 import com.skydex.api.models.WeatherEvent
 import java.time.Instant
@@ -52,9 +53,36 @@ fun IntegrationTestBase.persistEvent(
         longitude = longitude,
         phenomenon = phenomenon,
         validationStatus = validationStatus,
-        observedWeatherCode = phenomenon.weatherCodes.first(),
+        // A real code only when the status says the claim was confirmed. `create` can never write
+        // a row where an UNCONFIRMED status sits next to a code that matches the claim — that
+        // combination would mean the claim was actually observed but scored as if it wasn't — so a
+        // fixture defaulting to `phenomenon.weatherCodes.first()` unconditionally could produce a
+        // row `create` itself could never produce.
+        observedWeatherCode = if (validationStatus == ValidationStatus.CONFIRMED) {
+            phenomenon.weatherCodes.first()
+        } else {
+            null
+        },
         xpAwarded = xpAwarded,
         userId = owner.id!!
+    )
+)
+
+/**
+ * Persists an `UploadedPhoto` row the way `POST /api/photos` would have, so a test can then cite
+ * [filename] from `POST /api/events` and have `PhotoProvenanceService` recognize it as [owner]'s.
+ */
+fun IntegrationTestBase.persistUploadedPhoto(
+    owner: User,
+    filename: String = "${UUID.randomUUID()}.jpg",
+    uploadedAt: Instant = Instant.now()
+): UploadedPhoto = uploadedPhotoRepository.save(
+    UploadedPhoto(
+        id = null,
+        filename = filename,
+        uploaderId = owner.id!!,
+        uploadedAt = uploadedAt,
+        consumedAt = null
     )
 )
 

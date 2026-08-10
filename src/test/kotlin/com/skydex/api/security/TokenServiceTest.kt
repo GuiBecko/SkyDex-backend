@@ -16,7 +16,7 @@ import java.util.TimeZone
  * The zone juggling is the whole point. `generateExpirationDate` used to build a `LocalDateTime`
  * from the **system default** zone and then reinterpret it as a fixed `-03:00`, which silently
  * makes the token's lifetime a function of where the host thinks it is: two hours on a
- * `America/Sao_Paulo` developer laptop, five on a UTC container, eleven in Tokyo. A test that
+ * `America/Sao_Paulo` developer laptop, five on a UTC container, fourteen in Tokyo. A test that
  * simply asserted "about two hours" would therefore have passed on the machine this code was
  * written on and failed in production, so this one drives the default zone itself and demands the
  * same answer from every one of them.
@@ -77,8 +77,10 @@ class TokenServiceTest {
 
     @Test
     fun `a token lasts two hours on a host east of UTC`() {
-        // The other side of the old bug: reinterpreting a Tokyo wall clock as -03:00 handed out a
-        // token that had already expired before it was issued.
+        // The far end of the old bug: reinterpreting a Tokyo wall clock (UTC+9) as -03:00 pushed
+        // the expiry twelve hours into the future on top of the intended two, for a fourteen-hour
+        // token. The mirror case is a host WEST of -03:00 — there the same arithmetic runs
+        // backwards and issues tokens that are already expired.
         assertTokenLastsTwoHours("Asia/Tokyo")
     }
 

@@ -4,9 +4,11 @@ import com.skydex.api.domain.ValidationStatus
 import com.skydex.api.dto.CreateWeatherEventRequest
 import com.skydex.api.dto.HourlyData
 import com.skydex.api.dto.OpenMeteoResponse
+import com.skydex.api.dto.VisionAnalysis
 import com.skydex.api.models.User
 import com.skydex.api.services.BadgeService
 import com.skydex.api.services.OpenMeteoClient
+import com.skydex.api.services.VisionClient
 import com.skydex.api.support.IntegrationTestBase
 import com.skydex.api.support.authHeaderFor
 import com.skydex.api.support.persistEvent
@@ -25,6 +27,7 @@ import org.mockito.Mockito.never
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
+import org.mockito.kotlin.any
 import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.boot.test.mock.mockito.SpyBean
 import org.springframework.http.MediaType
@@ -57,6 +60,15 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     @SpyBean
     private lateinit var badgeServiceSpy: BadgeService
 
+    /**
+     * Only one test in this class (`stores a photo url relative but returns it absolute`) drives
+     * `POST /api/photos` for real rather than seeding a row with `persistUploadedPhoto`; everything
+     * else in `PhotoController.upload` since Task 3 now depends on this answering, so it is stubbed
+     * for every test here rather than only where it is exercised.
+     */
+    @MockBean
+    private lateinit var vision: VisionClient
+
     private lateinit var testUser: User
     private lateinit var authHeader: String
 
@@ -65,6 +77,13 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     fun setUpFixtures() {
         testUser = persistUser(name = "Test Pilot", email = "pilot@skydex.com")
         authHeader = authHeaderFor(testUser)
+        `when`(vision.analyze(any(), any())).thenReturn(
+            VisionAnalysis(
+                outdoorScore = 0.94,
+                phenomenonScores = mapOf("RAIN" to 0.80),
+                model = "clip-vit-b-32-zeroshot-v1"
+            )
+        )
     }
 
     /**

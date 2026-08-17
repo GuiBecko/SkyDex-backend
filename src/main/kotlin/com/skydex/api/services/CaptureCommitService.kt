@@ -1,5 +1,6 @@
 package com.skydex.api.services
 
+import com.skydex.api.domain.UnconfirmedReason
 import com.skydex.api.domain.ValidationStatus
 import com.skydex.api.models.WeatherEvent
 import com.skydex.api.repositories.UserRepository
@@ -82,10 +83,14 @@ class CaptureCommitService(
         )
         if (!reachable) {
             // observedWeatherCode is deliberately left alone. The weather really was observed and
-            // really did match; what failed is presence, not the claim, and blanking the code would
-            // erase a true fact about the row to make the verdict look tidier.
+            // really is what the row records; what failed is presence, not the reading, and
+            // blanking the code would erase a true fact to make the verdict look tidier.
             event.validationStatus = ValidationStatus.UNCONFIRMED
             event.xpAwarded = 0
+            // Overwrites whatever the provisional verdict recorded, and should: this check is the
+            // authoritative one, and a row that says PHOTO_CONTRADICTS_WEATHER when what actually
+            // sank it was an impossible journey sends the user to fix the wrong thing.
+            event.unconfirmedReason = UnconfirmedReason.IMPLAUSIBLE_TRAVEL
         }
 
         val saved = events.save(event)

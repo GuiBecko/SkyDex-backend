@@ -1,5 +1,6 @@
 package com.skydex.api.dto
 
+import com.fasterxml.jackson.annotation.JsonInclude
 import com.skydex.api.models.User
 import com.skydex.api.models.WeatherEvent
 import jakarta.validation.constraints.DecimalMax
@@ -36,8 +37,19 @@ data class CreateWeatherEventRequest(
     @field:DecimalMax(value = "180.0", message = "must be between -180 and 180")
     val longitude: Double,
 
-    @field:NotBlank(message = "Phenomenon is required")
-    val phenomenon: String,
+    /**
+     * **Accepted and ignored.** Kept in the DTO purely so an already-installed client that still
+     * sends it is not answered with a 400.
+     *
+     * The user no longer chooses a phenomenon: Open-Meteo's weather code for the capture's place
+     * and time decides it, and `CaptureValidationService` reads it from there. Removing this field
+     * would make every capture from the shipped app fail; validating it would make them fail more
+     * politely. Neither is better than ignoring it.
+     *
+     * This is the same accepted-and-ignored shape `capturedAt`, `latitude` and `longitude` already
+     * have on the update handler, and it is pinned by `WeatherEventControllerTest`.
+     */
+    val phenomenon: String? = null,
 
     /**
      * The client's own report that the coordinates above came from a mock location provider
@@ -68,6 +80,18 @@ data class WeatherEventResponse(
     val phenomenonName: String,
     val rarity: String,
     val validationStatus: String,
+    /**
+     * Why [validationStatus] is UNCONFIRMED, or null. Serialised as the enum name so the client
+     * can branch on it; the Portuguese copy for each reason lives in the app, not here.
+     *
+     * Omitted from the body entirely when null, rather than sent as an explicit `null`. The
+     * inclusion rule is on this property alone and NOT on `spring.jackson.default-property-
+     * inclusion`: that setting is global, and turning it on would silently drop
+     * `observedWeatherCode` and every other nullable field from every endpoint in the API — a
+     * change to responses nobody asked to change, some of which existing tests assert on.
+     */
+    @field:JsonInclude(JsonInclude.Include.NON_NULL)
+    val unconfirmedReason: String?,
     val xpAwarded: Int
 ) {
     companion object {
@@ -106,6 +130,7 @@ data class WeatherEventResponse(
             phenomenonName = event.phenomenon.displayName,
             rarity = event.phenomenon.rarity.name,
             validationStatus = event.validationStatus.name,
+            unconfirmedReason = event.unconfirmedReason?.name,
             xpAwarded = event.xpAwarded
         )
     }

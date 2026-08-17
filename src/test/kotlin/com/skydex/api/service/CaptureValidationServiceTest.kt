@@ -88,6 +88,93 @@ class CaptureValidationServiceTest {
         assertEquals(ValidationStatus.CONFIRMED, result.status)
     }
 
+    // --- slot selection: the loop that picks the nearest hourly entry -------------------------
+
+    @Test
+    fun `picks the nearest hourly slot, not the first one`() {
+        `when`(client.fetchHourlyForecast(-30.0, -51.0)).thenReturn(
+            OpenMeteoResponse(
+                latitude = -30.0,
+                longitude = -51.0,
+                hourly = HourlyData(
+                    time = listOf("2026-08-16T12:00", "2026-08-16T13:00", "2026-08-16T14:00"),
+                    temperatureCelsius = listOf(20.0, 20.0, 20.0),
+                    weatherCode = listOf(0, 0, 95)
+                )
+            )
+        )
+
+        val result = validate()
+
+        assertEquals(Phenomenon.THUNDERSTORM, result.phenomenon)
+        assertEquals(ValidationStatus.CONFIRMED, result.status)
+    }
+
+    /**
+     * The concrete risk this guards: `minOf(hourly.time.size, hourly.weatherCode.size)` becoming
+     * `maxOf` would walk past the shorter list's end and let an `IndexOutOfBoundsException` escape
+     * `validate`, turning an upstream that truncated one array (but not the other) into a 500. Built
+     * directly rather than through the `forecast` helper, which always keeps the two lists the same
+     * length. A usable slot survives within the shared bounds, so this still confirms rather than
+     * throwing.
+     */
+    @Test
+    fun `does not throw when the hourly arrays have mismatched lengths`() {
+        `when`(client.fetchHourlyForecast(-30.0, -51.0)).thenReturn(
+            OpenMeteoResponse(
+                latitude = -30.0,
+                longitude = -51.0,
+                hourly = HourlyData(
+                    time = listOf("2026-08-16T14:00", "2026-08-16T15:00", "2026-08-16T16:00"),
+                    temperatureCelsius = listOf(20.0, 20.0, 20.0),
+                    weatherCode = listOf(95)
+                )
+            )
+        )
+
+        val result = validate()
+
+        assertEquals(ValidationStatus.CONFIRMED, result.status)
+        assertEquals(95, result.observedWeatherCode)
+    }
+
+    @Test
+    fun `skips a slot whose timestamp cannot be parsed and confirms from the next one`() {
+        `when`(client.fetchHourlyForecast(-30.0, -51.0)).thenReturn(
+            OpenMeteoResponse(
+                latitude = -30.0,
+                longitude = -51.0,
+                hourly = HourlyData(
+                    time = listOf("not-a-timestamp", "2026-08-16T14:00"),
+                    temperatureCelsius = listOf(20.0, 20.0),
+                    // The first slot's code is deliberately unusable (null): it must never be read,
+                    // because the timestamp above it fails to parse and the loop should skip past it.
+                    weatherCode = listOf(null, 95)
+                )
+            )
+        )
+
+        val result = validate()
+
+        assertEquals(ValidationStatus.CONFIRMED, result.status)
+        assertEquals(95, result.observedWeatherCode)
+    }
+
+    @Test
+    fun `refuses a capture when the hourly block is empty`() {
+        `when`(client.fetchHourlyForecast(-30.0, -51.0)).thenReturn(
+            OpenMeteoResponse(
+                latitude = -30.0,
+                longitude = -51.0,
+                hourly = HourlyData(time = emptyList(), temperatureCelsius = emptyList(), weatherCode = emptyList())
+            )
+        )
+
+        // nearestIndex never leaves -1 with no slots to scan, so this is the same 503 as any other
+        // unusable hourly block rather than the UNCONFIRMED result the old design returned.
+        assertThrows<ServiceUnavailableException> { validate() }
+    }
+
     // --- the three ways to be unconfirmed -----------------------------------------------------
 
     @Test
@@ -156,6 +243,90 @@ class CaptureValidationServiceTest {
         `when`(client.fetchHourlyForecast(-30.0, -51.0)).thenReturn(forecast(code = 95))
 
         assertEquals(ValidationStatus.CONFIRMED, validate(photoScores = null).status)
+    }
+
+    // --- travel plausibility: edge cases and the speed boundary -------------------------------
+
+    @Test
+    fun `confirms a capture ten kilometres from the previous position an hour later`() {
+        // 0.09 degrees of latitude is a hair over 10 km, so an hour of elapsed time makes this
+        // about 10 km/h -- a bicycle, not an airliner.
+        `when`(client.fetchHourlyForecast(-30.0, -51.0)).thenReturn(forecast(code = 95))
+
+        val result = validate(
+            previous = LastKnownPosition(-30.09, -51.0, at.minusSeconds(3600))
+        )
+
+        assertEquals(ValidationStatus.CONFIRMED, result.status)
+        assertEquals(Phenomenon.THUNDERSTORM.rarity.xp, result.xpAwarded)
+    }
+
+    /**
+     * Zero elapsed time is the case a naive `distance / hours` would divide by zero on. It is also
+     * a real state: `capturedAt` comes from `Instant.now()`, and two captures can land inside the
+     * same tick. Tokyo and this capture's fixed point are a continent apart, so nothing but the
+     * zero-elapsed guard explains a refusal here.
+     */
+    @Test
+    fun `does not throw when the previous position shares this capture's instant`() {
+        `when`(client.fetchHourlyForecast(-30.0, -51.0)).thenReturn(forecast(code = 95))
+
+        val result = validate(
+            previous = LastKnownPosition(35.6762, 139.6503, at)
+        )
+
+        assertEquals(ValidationStatus.UNCONFIRMED, result.status)
+        assertEquals(UnconfirmedReason.IMPLAUSIBLE_TRAVEL, result.unconfirmedReason)
+        assertEquals(0, result.xpAwarded)
+    }
+
+    /**
+     * The same instant at the same place is the one zero-elapsed case that is NOT implausible, and
+     * it must not be swept up with the one above: a user who captures twice from one spot inside a
+     * single tick has done nothing impossible.
+     */
+    @Test
+    fun `confirms a capture at the previous position even with no time between them`() {
+        `when`(client.fetchHourlyForecast(-30.0, -51.0)).thenReturn(forecast(code = 95))
+
+        val result = validate(
+            previous = LastKnownPosition(-30.0, -51.0, at)
+        )
+
+        assertEquals(ValidationStatus.CONFIRMED, result.status)
+    }
+
+    /**
+     * These two straddle the threshold, and they are the only tests here that pin the DISTANCE
+     * calculation to a magnitude rather than to an order of magnitude. Both run north-south from the
+     * fixed capture point along its meridian, where the haversine reduces exactly to
+     * `EARTH_RADIUS_KM * dLatRadians` regardless of the starting latitude -- so the expected
+     * distances below are arithmetic, not measurements.
+     */
+    @Test
+    fun `confirms eight hundred kilometres in an hour, just under the speed limit`() {
+        // 7.1946 degrees of latitude = 6371 km * 0.12557 rad = 800.0 km.
+        `when`(client.fetchHourlyForecast(-30.0, -51.0)).thenReturn(forecast(code = 95))
+
+        val result = validate(
+            previous = LastKnownPosition(-37.1946, -51.0, at.minusSeconds(3600))
+        )
+
+        assertEquals(ValidationStatus.CONFIRMED, result.status)
+    }
+
+    @Test
+    fun `does not confirm a thousand kilometres in an hour, just over the speed limit`() {
+        // 8.9932 degrees of latitude = 6371 km * 0.15696 rad = 1000.0 km.
+        `when`(client.fetchHourlyForecast(-30.0, -51.0)).thenReturn(forecast(code = 95))
+
+        val result = validate(
+            previous = LastKnownPosition(-38.9932, -51.0, at.minusSeconds(3600))
+        )
+
+        assertEquals(ValidationStatus.UNCONFIRMED, result.status)
+        assertEquals(UnconfirmedReason.IMPLAUSIBLE_TRAVEL, result.unconfirmedReason)
+        assertEquals(0, result.xpAwarded)
     }
 
     // --- 503 -----------------------------------------------------------------------------------

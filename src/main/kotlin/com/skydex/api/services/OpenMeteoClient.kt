@@ -57,7 +57,7 @@ class OpenMeteoClient(
             restClient.get()
                 .uri(
                     "/v1/forecast?latitude={lat}&longitude={lon}" +
-                        "&hourly=temperature_2m,weather_code&timezone=UTC&past_days=1&forecast_days=2",
+                        "&hourly=temperature_2m,weather_code,is_day&timezone=UTC&past_days=1&forecast_days=2",
                     latitude,
                     longitude
                 )

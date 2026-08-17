@@ -116,4 +116,56 @@ class OpenMeteoClientTest {
         assertEquals(listOf(95), forecast?.hourly?.weatherCode)
         assertEquals(listOf(19.0), forecast?.hourly?.temperatureCelsius)
     }
+
+    /**
+     * Night is the one condition under which the photo check is skipped entirely, so the capture
+     * path cannot work without this series. Asking for it costs nothing: the call to Open-Meteo is
+     * already being made for the weather code.
+     */
+    @Test
+    fun `requests the is_day series and parses it`() {
+        respondWith(
+            """
+            {
+              "latitude": -30.0,
+              "longitude": -51.0,
+              "hourly": {
+                "time": ["2026-08-16T14:00"],
+                "temperature_2m": [21.0],
+                "weather_code": [95],
+                "is_day": [1]
+              }
+            }
+            """.trimIndent()
+        )
+        val client = OpenMeteoClient(baseUrl)
+
+        val response = client.fetchHourlyForecast(-30.0, -51.0)
+
+        assertEquals(listOf(1), response?.hourly?.isDay)
+    }
+
+    /**
+     * A cached or proxied response from before this field was requested. Missing daylight
+     * information must not fail the parse — the caller defaults to treating it as day.
+     */
+    @Test
+    fun `tolerates a response with no is_day series`() {
+        respondWith(
+            """
+            {
+              "latitude": -30.0,
+              "longitude": -51.0,
+              "hourly": {
+                "time": ["2026-08-16T14:00"],
+                "temperature_2m": [21.0],
+                "weather_code": [95]
+              }
+            }
+            """.trimIndent()
+        )
+        val client = OpenMeteoClient(baseUrl)
+
+        assertEquals(emptyList<Int?>(), client.fetchHourlyForecast(-30.0, -51.0)?.hourly?.isDay)
+    }
 }

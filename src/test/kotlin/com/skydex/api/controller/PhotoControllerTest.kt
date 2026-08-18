@@ -1,5 +1,7 @@
 package com.skydex.api.controller
 
+import com.skydex.api.dto.VisionAnalysis
+import com.skydex.api.services.VisionClient
 import com.skydex.api.support.IntegrationTestBase
 import com.skydex.api.support.authHeaderFor
 import com.skydex.api.support.persistUser
@@ -8,7 +10,11 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito.`when`
+import org.mockito.kotlin.any
+import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.http.MediaType
 import org.springframework.mock.web.MockMultipartFile
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
@@ -161,5 +167,82 @@ class PhotoControllerTest : IntegrationTestBase() {
 
         mockMvc.perform(multipart("/api/photos").header("Authorization", authHeaderFor(user)))
             .andExpect(status().isBadRequest)
+    }
+
+    // --- vision analysis at upload -----------------------------------------------------------
+    //
+    // CLIP never runs in this suite. The real model is exercised by the golden-set regression in
+    // skydex-vision; what these tests pin is the wiring: what gets stored, and which status each
+    // failure produces.
+
+    @MockBean
+    private lateinit var vision: VisionClient
+
+    private fun analysis(outdoor: Double, top: String = "RAIN") = VisionAnalysis(
+        outdoorScore = outdoor,
+        phenomenonScores = mapOf(
+            "CLEAR" to 0.04, "CLOUDY" to 0.04, "FOG" to 0.04,
+            "RAIN" to 0.04, "SNOW" to 0.04, "STORM" to 0.04
+        ) + (top to 0.80),
+        model = "clip-vit-b-32-zeroshot-v1"
+    )
+
+    @BeforeEach
+    fun stubVision() {
+        `when`(vision.analyze(any(), any())).thenReturn(analysis(outdoor = 0.94))
+    }
+
+    @Test
+    fun `stores the vision scores alongside the photo`() {
+        val user = persistUser(email = "analysed@skydex.com")
+        val part = MockMultipartFile("file", "storm.jpg", MediaType.IMAGE_JPEG_VALUE, jpegBytes)
+
+        val body = mockMvc.perform(
+            multipart("/api/photos").file(part).header("Authorization", authHeaderFor(user))
+        )
+            .andExpect(status().isCreated)
+            .andReturn().response.contentAsString
+
+        val filename = objectMapper.readTree(body).get("photoUrl").asText().substringAfterLast('/')
+        val stored = uploadedPhotoRepository.findByFilename(filename)!!
+
+        assertEquals(0.94, stored.visionOutdoorScore)
+        assertEquals("clip-vit-b-32-zeroshot-v1", stored.visionModel)
+        assertNotNull(stored.visionAnalyzedAt)
+        // Stored as JSON text rather than as a JSONB column: the map is read back whole, never
+        // queried into, so a column type that needs a Hibernate dialect extension buys nothing.
+        assertTrue(stored.visionScores!!.contains("\"RAIN\":0.8"), stored.visionScores!!)
+    }
+
+    @Test
+    fun `refuses a photo the model does not think is the sky`() {
+        `when`(vision.analyze(any(), any())).thenReturn(analysis(outdoor = 0.12))
+        val user = persistUser(email = "notsky@skydex.com")
+        val part = MockMultipartFile("file", "wall.jpg", MediaType.IMAGE_JPEG_VALUE, jpegBytes)
+
+        mockMvc.perform(
+            multipart("/api/photos").file(part).header("Authorization", authHeaderFor(user))
+        )
+            .andExpect(status().isUnprocessableEntity)
+
+        // Nothing was written. Rejecting at upload rather than at capture is what keeps junk out
+        // of the database entirely, and what lets the user find out before typing a title.
+        assertEquals(0, uploadedPhotoRepository.count())
+    }
+
+    @Test
+    fun `answers 503 when the vision service cannot be reached`() {
+        `when`(vision.analyze(any(), any())).thenReturn(null)
+        val user = persistUser(email = "visiondown@skydex.com")
+        val part = MockMultipartFile("file", "storm.jpg", MediaType.IMAGE_JPEG_VALUE, jpegBytes)
+
+        mockMvc.perform(
+            multipart("/api/photos").file(part).header("Authorization", authHeaderFor(user))
+        )
+            .andExpect(status().isServiceUnavailable)
+
+        // A 503 must cost the user nothing: no row, no file, nothing to clean up, and a retry
+        // that behaves exactly like a first attempt.
+        assertEquals(0, uploadedPhotoRepository.count())
     }
 }

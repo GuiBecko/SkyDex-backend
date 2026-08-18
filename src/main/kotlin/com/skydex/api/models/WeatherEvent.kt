@@ -1,6 +1,7 @@
 package com.skydex.api.models
 
 import com.skydex.api.domain.Phenomenon
+import com.skydex.api.domain.UnconfirmedReason
 import com.skydex.api.domain.ValidationStatus
 import jakarta.persistence.Column
 import jakarta.persistence.Entity
@@ -51,6 +52,15 @@ class WeatherEvent(
 
     @Column(name = "xp_awarded", nullable = false)
     var xpAwarded: Int = 0,
+
+    /**
+     * Why [validationStatus] is UNCONFIRMED, or null when it is CONFIRMED or when the row predates
+     * this column. Nullable and never back-filled: a guessed reason on a historical row would be
+     * worse than an absent one.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "unconfirmed_reason", length = 32)
+    var unconfirmedReason: UnconfirmedReason? = null,
 
     @Column(name = "user_id", nullable = false)
     var userId: UUID

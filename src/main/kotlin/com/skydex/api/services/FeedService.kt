@@ -39,7 +39,12 @@ class FeedService(
             .associateBy { it.id }
 
         return captures.mapNotNull { capture ->
-            authorsById[capture.userId]?.let { WeatherEventResponse.from(capture, it, publicBaseUrl) }
+            authorsById[capture.userId]?.let {
+                // viewerId is the requesting user, not the capture's author: a friend's row must
+                // still show validationStatus but never the reason behind it. See
+                // WeatherEventResponse.from's KDoc on unconfirmedReason.
+                WeatherEventResponse.from(capture, it, publicBaseUrl, viewerId = user.id!!)
+            }
         }
     }
 

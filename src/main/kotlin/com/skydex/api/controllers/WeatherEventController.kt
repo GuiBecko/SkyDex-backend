@@ -1,6 +1,5 @@
 package com.skydex.api.controllers
 
-import com.skydex.api.domain.Phenomenon
 import com.skydex.api.dto.CreateWeatherEventRequest
 import com.skydex.api.dto.WeatherEventResponse
 import com.skydex.api.errors.ForbiddenException
@@ -8,10 +7,10 @@ import com.skydex.api.errors.NotFoundException
 import com.skydex.api.models.User
 import com.skydex.api.models.WeatherEvent
 import com.skydex.api.repositories.WeatherEventRepository
-import com.skydex.api.services.BadUploadException
 import com.skydex.api.services.BadgeService
 import com.skydex.api.services.CaptureCommitService
 import com.skydex.api.services.CaptureValidationService
+import com.skydex.api.services.PhotoAnalysisService
 import com.skydex.api.services.PhotoProvenanceService
 import com.skydex.api.services.lastKnownPosition
 import jakarta.validation.Valid
@@ -38,6 +37,7 @@ class WeatherEventController(
     private val events: WeatherEventRepository,
     private val validation: CaptureValidationService,
     private val photoProvenance: PhotoProvenanceService,
+    private val photoAnalysis: PhotoAnalysisService,
     private val captureCommit: CaptureCommitService,
     // Read-side only. `photo_url` is persisted relative so a stored row never carries a host that
     // can go stale; the absolute URL is composed on the way out by `WeatherEventResponse.from`,
@@ -51,8 +51,8 @@ class WeatherEventController(
         @AuthenticationPrincipal currentUser: User,
         @Valid @RequestBody request: CreateWeatherEventRequest
     ): ResponseEntity<WeatherEventResponse> {
-        val claimed = Phenomenon.fromNameOrNull(request.phenomenon)
-            ?: throw BadUploadException("Unknown phenomenon: ${request.phenomenon}")
+        // `request.phenomenon` is deliberately not read. See its KDoc: it is accepted so an
+        // already-installed client is not 400'd, and ignored because Open-Meteo decides now.
 
         // One stamp, used for BOTH the validation and the stored row. Reading Instant.now()
         // twice could straddle an hour boundary and validate against a slot the capture is
@@ -65,13 +65,17 @@ class WeatherEventController(
         // read; the photo is not spent until the commit below, after scoring.
         val photo = photoProvenance.verify(request.photoUrl, currentUser.id!!, capturedAt)
 
+        // Throws ServiceUnavailableException -> 503 when Open-Meteo cannot answer. Raised here,
+        // before `commit`, so the photo is still unspent and the client's retry is free.
         val result = validation.validate(
-            claimed = claimed,
             latitude = request.latitude,
             longitude = request.longitude,
             capturedAt = capturedAt,
             previous = currentUser.lastKnownPosition(),
-            locationIsMock = request.locationIsMock
+            locationIsMock = request.locationIsMock,
+            // Cached at upload. Null for a photo predating analysis, which
+            // PhotoAuthenticityService reads as "no opinion" rather than as a failed check.
+            photoScores = photoAnalysis.deserialise(photo.visionScores)
         )
 
         // Spending the photo and inserting the capture are one transaction, and they come AFTER
@@ -93,10 +97,11 @@ class WeatherEventController(
                 capturedAt = capturedAt,
                 latitude = request.latitude,
                 longitude = request.longitude,
-                phenomenon = claimed,
+                phenomenon = result.phenomenon,
                 validationStatus = result.status,
                 observedWeatherCode = result.observedWeatherCode,
                 xpAwarded = result.xpAwarded,
+                unconfirmedReason = result.unconfirmedReason,
                 userId = currentUser.id!!
             ),
             photoId = photo.id!!,

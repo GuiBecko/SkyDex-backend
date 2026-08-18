@@ -1,11 +1,14 @@
 package com.skydex.api.controller
 
+import com.skydex.api.domain.UnconfirmedReason
+import com.skydex.api.domain.ValidationStatus
 import com.skydex.api.models.Friendship
 import com.skydex.api.models.FriendshipStatus
 import com.skydex.api.support.IntegrationTestBase
 import com.skydex.api.support.authHeaderFor
 import com.skydex.api.support.persistEvent
 import com.skydex.api.support.persistUser
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
@@ -134,5 +137,47 @@ class FeedControllerTest : IntegrationTestBase() {
     @Test
     fun `the feed is not public`() {
         mockMvc.perform(get("/api/feed")).andExpect(status().isUnauthorized)
+    }
+
+    /**
+     * `unconfirmedReason` is for the capture's own author, not for whoever is looking at their feed
+     * row. Its whole purpose is telling that person what to fix; a friend can act on none of it, and
+     * seeing e.g. `MOCK_LOCATION` on someone else's row is a disclosed accusation nobody asked for.
+     * `validationStatus` stays visible on the same row so the client's not-confirmed badge still
+     * renders — only the reason behind it is withheld from a non-owner.
+     */
+    @Test
+    fun `shows a friend's validation status but not the reason it was not confirmed`() {
+        val me = persistUser(name = "Me", email = "me@skydex.com")
+        val friend = persistUser(name = "Friend", email = "friend@skydex.com")
+        friendshipRepository.save(
+            Friendship(
+                id = null,
+                requesterId = me.id!!,
+                addresseeId = friend.id!!,
+                status = FriendshipStatus.ACCEPTED
+            )
+        )
+
+        val flagged = persistEvent(
+            friend,
+            title = "Friend's flagged capture",
+            validationStatus = ValidationStatus.UNCONFIRMED,
+            xpAwarded = 0
+        )
+        flagged.unconfirmedReason = UnconfirmedReason.MOCK_LOCATION
+        weatherEventRepository.save(flagged)
+
+        val body = mockMvc.perform(get("/api/feed").header("Authorization", authHeaderFor(me)))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$[0].title").value("Friend's flagged capture"))
+            .andExpect(jsonPath("$[0].validationStatus").value("UNCONFIRMED"))
+            .andExpect(jsonPath("$[0].unconfirmedReason").doesNotExist())
+            .andReturn().response.contentAsString
+
+        assertFalse(
+            body.contains("MOCK_LOCATION"),
+            "a friend's feed row leaked the reason their capture was flagged: $body"
+        )
     }
 }

@@ -5,6 +5,8 @@ import com.skydex.api.errors.BadRequestException
 import com.skydex.api.errors.ConflictException
 import com.skydex.api.errors.ForbiddenException
 import com.skydex.api.errors.NotFoundException
+import com.skydex.api.errors.ServiceUnavailableException
+import com.skydex.api.errors.UnprocessableContentException
 import com.skydex.api.services.BadUploadException
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -44,6 +46,23 @@ class GlobalExceptionHandler {
     @ExceptionHandler(BadRequestException::class)
     fun handleBadRequest(e: BadRequestException): ResponseEntity<ErrorResponse> =
         ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ErrorResponse(e.message ?: "Bad request"))
+
+    /**
+     * Explicit, not left to the catch-all: `ServiceUnavailableException` does not implement
+     * Spring's `ErrorResponse`, so `handleUnexpected` would report an upstream outage as a 500 —
+     * telling the client we are broken when the honest answer is "try again shortly".
+     */
+    @ExceptionHandler(ServiceUnavailableException::class)
+    fun handleServiceUnavailable(e: ServiceUnavailableException): ResponseEntity<ErrorResponse> {
+        log.warn("An upstream this request needs is unavailable: {}", e.message)
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+            .body(ErrorResponse(e.message ?: "Service temporarily unavailable"))
+    }
+
+    @ExceptionHandler(UnprocessableContentException::class)
+    fun handleUnprocessableContent(e: UnprocessableContentException): ResponseEntity<ErrorResponse> =
+        ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+            .body(ErrorResponse(e.message ?: "Content could not be accepted"))
 
     @ExceptionHandler(MethodArgumentNotValidException::class)
     fun handleValidation(e: MethodArgumentNotValidException): ResponseEntity<ErrorResponse> {

@@ -46,8 +46,10 @@ data class CreateWeatherEventRequest(
      * would make every capture from the shipped app fail; validating it would make them fail more
      * politely. Neither is better than ignoring it.
      *
-     * This is the same accepted-and-ignored shape `capturedAt`, `latitude` and `longitude` already
-     * have on the update handler, and it is pinned by `WeatherEventControllerTest`.
+     * This is the same accepted-and-ignored shape `latitude` and `longitude` already have on the
+     * update handler — `capturedAt` is not a field on this DTO at all, since the server stamps the
+     * capture time itself and never reads one from the client. It is pinned by
+     * `WeatherEventControllerTest`.
      */
     val phenomenon: String? = null,
 
@@ -89,6 +91,12 @@ data class WeatherEventResponse(
      * inclusion`: that setting is global, and turning it on would silently drop
      * `observedWeatherCode` and every other nullable field from every endpoint in the API — a
      * change to responses nobody asked to change, some of which existing tests assert on.
+     *
+     * Also omitted — regardless of [validationStatus] — from a row whose [userId] is not the
+     * viewer's own. The reason exists to tell the capture's author what to fix; a friend reading
+     * it in their feed learns nothing actionable and only sees an accusation about someone else.
+     * `validationStatus` stays visible either way, so the not-confirmed badge still works. See
+     * [from]'s `viewerId` parameter for where this is enforced.
      */
     @field:JsonInclude(JsonInclude.Include.NON_NULL)
     val unconfirmedReason: String?,
@@ -114,8 +122,14 @@ data class WeatherEventResponse(
          * The `startsWith("/")` guard keeps this idempotent and leaves an already-absolute value
          * alone, which matters for the externally-hosted URLs captures could carry before uploads
          * existed.
+         *
+         * [viewerId] defaults to null, which means "the viewer is [event]'s own author" — true of
+         * every call site except `FeedService`, where a friend's row can be shown to someone who is
+         * not its author. Passing null there instead of `author.id` would be wrong in the same
+         * direction every time (never redact), so the default is intentionally the shape every
+         * other caller already has rather than a value they would have to supply correctly by hand.
          */
-        fun from(event: WeatherEvent, author: User, baseUrl: String) = WeatherEventResponse(
+        fun from(event: WeatherEvent, author: User, baseUrl: String, viewerId: UUID? = null) = WeatherEventResponse(
             id = event.id!!,
             title = event.title,
             description = event.description,
@@ -130,7 +144,11 @@ data class WeatherEventResponse(
             phenomenonName = event.phenomenon.displayName,
             rarity = event.phenomenon.rarity.name,
             validationStatus = event.validationStatus.name,
-            unconfirmedReason = event.unconfirmedReason?.name,
+            unconfirmedReason = if (viewerId == null || viewerId == event.userId) {
+                event.unconfirmedReason?.name
+            } else {
+                null
+            },
             xpAwarded = event.xpAwarded
         )
     }

@@ -1,5 +1,6 @@
 package com.skydex.api.controller
 
+import com.skydex.api.domain.UnconfirmedReason
 import com.skydex.api.domain.ValidationStatus
 import com.skydex.api.dto.CreateWeatherEventRequest
 import com.skydex.api.dto.HourlyData
@@ -77,10 +78,19 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     fun setUpFixtures() {
         testUser = persistUser(name = "Test Pilot", email = "pilot@skydex.com")
         authHeader = authHeaderFor(testUser)
+        // The full six-group map the brief specified, STORM-leaning at 0.80 with the remainder split
+        // evenly across the other five groups (the same shape `PhotoAuthenticityServiceTest`'s
+        // `confident` helper builds). A single-key stub would only pass because that one key
+        // happened to sit in STORM's reconcilable set against the `code = 95` forecast every
+        // Task 6 test here stubs — tightening the contradiction matrix would then fail unrelated
+        // tests for a reason that has nothing to do with what they assert.
         `when`(vision.analyze(any(), any())).thenReturn(
             VisionAnalysis(
                 outdoorScore = 0.94,
-                phenomenonScores = mapOf("RAIN" to 0.80),
+                phenomenonScores = mapOf(
+                    "CLEAR" to 0.04, "CLOUDY" to 0.04, "FOG" to 0.04,
+                    "RAIN" to 0.04, "SNOW" to 0.04, "STORM" to 0.80
+                ),
                 model = "clip-vit-b-32-zeroshot-v1"
             )
         )
@@ -1128,6 +1138,10 @@ class WeatherEventControllerTest : IntegrationTestBase() {
      *
      * `CaptureCommitService` re-reads the row under a lock and downgrades, which is what makes the
      * outcome UNCONFIRMED rather than a confirmed teleport.
+     *
+     * The reason is asserted too, not just status and xp: `CaptureCommitService.commit` writes
+     * `IMPLAUSIBLE_TRAVEL` for this branch, and nothing else in the suite pinned that assignment —
+     * deleting it left the suite green.
      */
     @Test
     fun `downgrades a capture whose trail moved while the forecast was being fetched`() {
@@ -1151,7 +1165,51 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         postCapture(user, thunderstormCapture(freshPhotoFor(user), tokyo))
             .andExpect(status().isCreated)
             .andExpect(jsonPath("$.validationStatus").value("UNCONFIRMED"))
+            .andExpect(jsonPath("$.unconfirmedReason").value("IMPLAUSIBLE_TRAVEL"))
             .andExpect(jsonPath("$.xpAwarded").value(0))
+    }
+
+    /**
+     * The other half of the same line: `CaptureCommitService.commit` must NOT relabel a capture
+     * already marked `MOCK_LOCATION` as `IMPLAUSIBLE_TRAVEL` just because the locked re-check also
+     * disagrees. `MOCK_LOCATION` is the more specific, more actionable diagnosis — a mocked position
+     * failing a travel check is a consequence of the mocking, not an independent finding — so the
+     * commit-time overwrite must leave it alone.
+     *
+     * Same interleaving as the test above (the trail moves from inside the forecast stub), but this
+     * capture also reports `locationIsMock = true`, so `CaptureValidationService` provisionally
+     * marks it `MOCK_LOCATION` before the network call. The locked re-check then also finds the
+     * (mocked) claimed position unreachable from where the trail moved to. An unconditional
+     * overwrite would rewrite the reason to `IMPLAUSIBLE_TRAVEL`; the guarded one keeps `MOCK_LOCATION`.
+     */
+    @Test
+    fun `does not relabel a mock-located capture as implausible travel after the locked re-check`() {
+        val user = persistUser(email = "mocked-interleaved@skydex.com")
+
+        `when`(openMeteoClient.fetchHourlyForecast(tokyo.first, tokyo.second)).thenAnswer {
+            recordTrail(user, portoAlegre.first, portoAlegre.second, Instant.now())
+            OpenMeteoResponse(
+                latitude = tokyo.first,
+                longitude = tokyo.second,
+                hourly = HourlyData(
+                    time = listOf(currentSlotLabel()),
+                    temperatureCelsius = listOf(19.0),
+                    weatherCode = listOf(95)
+                )
+            )
+        }
+
+        postCapture(
+            user,
+            thunderstormCapture(freshPhotoFor(user), tokyo, locationIsMock = true)
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.validationStatus").value("UNCONFIRMED"))
+            .andExpect(jsonPath("$.unconfirmedReason").value("MOCK_LOCATION"))
+            .andExpect(jsonPath("$.xpAwarded").value(0))
+
+        val stored = weatherEventRepository.findAll().first { it.userId == user.id }
+        assertEquals(UnconfirmedReason.MOCK_LOCATION, stored.unconfirmedReason)
     }
 
     /**
@@ -1407,7 +1465,7 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         val user = persistUser(email = "confirmed@skydex.com")
         val photoUrl = uploadPhotoFor(user)
 
-        mockMvc.perform(
+        val body = mockMvc.perform(
             post("/api/events")
                 .header("Authorization", authHeaderFor(user))
                 .contentType(MediaType.APPLICATION_JSON)
@@ -1421,6 +1479,63 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             .andExpect(status().isCreated)
             .andExpect(jsonPath("$.validationStatus").value("CONFIRMED"))
             .andExpect(jsonPath("$.unconfirmedReason").doesNotExist())
+            .andReturn().response.contentAsString
+
+        // `doesNotExist()` above also passes for an explicit JSON `null`, so on its own it cannot
+        // tell "the field was omitted" (what @JsonInclude(NON_NULL) is supposed to guarantee) apart
+        // from "the field was sent as null". Checking the raw body pins the actual annotation.
+        assertFalse(
+            body.contains("unconfirmedReason"),
+            "expected unconfirmedReason to be omitted entirely, got: $body"
+        )
+    }
+
+    /**
+     * The end-to-end test for stage 2 of photo validation — the anti-fraud feature this whole
+     * integration exists to add. Every other test in this class that reaches
+     * `PhotoAuthenticityService.contradicts` does so with a photo group that is reconcilable with
+     * the stubbed weather, so nothing here previously exercised a genuine contradiction; deleting
+     * `photoScores = photoAnalysis.deserialise(photo.visionScores)` in
+     * `WeatherEventController.create` (replacing it with `null`) left the whole suite green.
+     *
+     * `uploadPhotoFor` drives a real `POST /api/photos`, so the photo's cached scores are the
+     * `@BeforeEach` fixture's STORM-leaning six-group map (0.80 STORM, the rest at 0.04 each) —
+     * confident enough to clear both gates (`expected < 0.10`, `top > 0.70`). Stubbing `code = 0`
+     * makes the expected group CLEAR, and CLEAR's row in the contradiction matrix blocks every
+     * other group, STORM included — the strictest, cleanest pairing available.
+     *
+     * The capture is KEPT, not rejected: 201, UNCONFIRMED, and the specific reason, both in the
+     * response and in the stored row.
+     */
+    @Test
+    fun `flags a capture whose photo confidently contradicts the observed weather`() {
+        stubForecast(code = 0) // CLEAR_SKY; CLEAR admits only CLEAR in the contradiction matrix
+        val user = persistUser(email = "contradicted@skydex.com")
+        val photoUrl = uploadPhotoFor(user) // scored STORM 0.80 by the shared vision fixture
+
+        val body = mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {"title":"t","description":"d","photoUrl":"$photoUrl",
+                     "latitude":-30.0,"longitude":-51.0,"locationIsMock":false}
+                    """.trimIndent()
+                )
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.phenomenon").value("CLEAR_SKY"))
+            .andExpect(jsonPath("$.validationStatus").value("UNCONFIRMED"))
+            .andExpect(jsonPath("$.unconfirmedReason").value("PHOTO_CONTRADICTS_WEATHER"))
+            .andExpect(jsonPath("$.xpAwarded").value(0))
+            .andReturn().response.contentAsString
+
+        val id = UUID.fromString(objectMapper.readTree(body).get("id").asText())
+        val stored = weatherEventRepository.findById(id).orElseThrow()
+        assertEquals(UnconfirmedReason.PHOTO_CONTRADICTS_WEATHER, stored.unconfirmedReason)
+        assertEquals(ValidationStatus.UNCONFIRMED, stored.validationStatus)
+        assertEquals(0, stored.xpAwarded)
     }
 
     /**

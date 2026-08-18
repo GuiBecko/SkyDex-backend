@@ -48,8 +48,6 @@ class CaptureValidationServiceTest {
     ) + (winner to 0.80)
 
     private fun validate(
-        code: Int? = 95,
-        isDay: Int? = 1,
         previous: LastKnownPosition? = null,
         locationIsMock: Boolean = false,
         photoScores: Map<String, Double>? = photoSaying("STORM")

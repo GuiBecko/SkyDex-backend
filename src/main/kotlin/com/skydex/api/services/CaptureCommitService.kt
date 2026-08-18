@@ -87,10 +87,18 @@ class CaptureCommitService(
             // blanking the code would erase a true fact to make the verdict look tidier.
             event.validationStatus = ValidationStatus.UNCONFIRMED
             event.xpAwarded = 0
-            // Overwrites whatever the provisional verdict recorded, and should: this check is the
-            // authoritative one, and a row that says PHOTO_CONTRADICTS_WEATHER when what actually
-            // sank it was an impossible journey sends the user to fix the wrong thing.
-            event.unconfirmedReason = UnconfirmedReason.IMPLAUSIBLE_TRAVEL
+            // Overwrite only when there is nothing more specific to protect. A row with no reason
+            // yet, or PHOTO_CONTRADICTS_WEATHER, gets IMPLAUSIBLE_TRAVEL: this check is the
+            // authoritative one for those cases, and a row that says PHOTO_CONTRADICTS_WEATHER when
+            // what actually sank it was an impossible journey sends the user to fix the wrong thing.
+            // MOCK_LOCATION is different: it is already the more specific and more actionable
+            // diagnosis, and a mocked position failing the travel re-check is a consequence of the
+            // mocking, not an independent finding, so it is left alone rather than relabelled.
+            if (event.unconfirmedReason == null ||
+                event.unconfirmedReason == UnconfirmedReason.PHOTO_CONTRADICTS_WEATHER
+            ) {
+                event.unconfirmedReason = UnconfirmedReason.IMPLAUSIBLE_TRAVEL
+            }
         }
 
         val saved = events.save(event)

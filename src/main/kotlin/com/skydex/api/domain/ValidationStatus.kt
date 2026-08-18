@@ -6,8 +6,10 @@ package com.skydex.api.domain
  * CONFIRMED means exactly four things, and it is worth reading them as the complete list:
  * - Open-Meteo has a record for that place and time, and it is the phenomenon the capture is
  *   stored under — the user no longer claims one, so this is a lookup rather than a check;
- * - the photograph does not confidently contradict that weather, and `skydex-vision` believed it
- *   was an outdoor sky when it was uploaded;
+ * - where a photograph was analysed at all, it does not confidently contradict that weather, and
+ *   `skydex-vision` believed it was an outdoor sky when it was uploaded — a photo with no
+ *   analysis, an empty one, or one reporting a group this build does not recognise, does not
+ *   block confirmation either, since a check that never ran cannot have been passed;
  * - the capture cites a photo this same user uploaded minutes earlier and has not spent before;
  * - the position is one the user could have reached from their previous capture, and the client
  *   did not report the fix as coming from a mock provider.

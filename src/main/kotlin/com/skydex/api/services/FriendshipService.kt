@@ -61,6 +61,20 @@ class FriendshipService(
                 requester?.let { toRequestResponse(friendship, it) }
             }
 
+    /**
+     * How many requests are waiting for [user] to answer — the number behind the invite badge.
+     *
+     * Deliberately not `incoming(user).size`: [incoming] resolves every requester through
+     * `UserRepository` to build a response the badge throws away, and it is called on every
+     * navigation the bottom bar survives. This is one `COUNT`.
+     *
+     * It counts rows, so it can exceed the number of distinct people if the mirrored-request race
+     * in [request]'s KDoc ever fires. A badge reading 2 for one duplicated invite is a cosmetic
+     * miss on an accepted race, and the list the user then opens is deduplicated.
+     */
+    fun pendingCount(user: User): Long =
+        friendships.countByAddresseeIdAndStatus(user.id!!, FriendshipStatus.PENDING)
+
     fun accept(user: User, requestId: UUID): FriendResponse {
         val friendship = friendships.findById(requestId).orElseThrow {
             NotFoundException("Friend request not found")
@@ -75,13 +89,23 @@ class FriendshipService(
         val requester = users.findById(saved.requesterId).orElseThrow {
             NotFoundException("Friend request not found")
         }
-        return FriendResponse(requester.id!!, requester.name, requester.email, saved.createdAt)
+        return FriendResponse(
+            friendshipId = saved.id!!,
+            userId = requester.id!!,
+            name = requester.name,
+            email = requester.email,
+            friendsSince = saved.createdAt
+        )
     }
 
     /**
      * Deletes the row regardless of its status. This is both "decline" (the addressee refuses a
      * pending request) and "unfriend" (either party removes an accepted one) — the same endpoint
      * serves both, by design, for either party.
+     *
+     * The unfriend half went unreachable from the app until `FriendResponse.friendshipId` existed:
+     * the friends list carried only the other user's id, so nothing on the client had a value to
+     * put in this route. If that field is ever dropped, this branch goes dark again.
      */
     fun decline(user: User, requestId: UUID) {
         val friendship = friendships.findById(requestId).orElseThrow {
@@ -99,7 +123,13 @@ class FriendshipService(
             .mapNotNull { friendship ->
                 val otherId = otherSide(friendship, user.id!!)
                 users.findById(otherId).orElse(null)?.let {
-                    FriendResponse(it.id!!, it.name, it.email, friendship.createdAt)
+                    FriendResponse(
+                        friendshipId = friendship.id!!,
+                        userId = it.id!!,
+                        name = it.name,
+                        email = it.email,
+                        friendsSince = friendship.createdAt
+                    )
                 }
             }
             .distinctBy { it.userId }

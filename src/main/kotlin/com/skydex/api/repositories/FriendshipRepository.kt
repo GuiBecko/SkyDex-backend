@@ -16,6 +16,12 @@ interface FriendshipRepository : JpaRepository<Friendship, UUID> {
 
     fun findByAddresseeIdAndStatus(addresseeId: UUID, status: FriendshipStatus): List<Friendship>
 
+    /**
+     * Counts, rather than fetching and sizing, because the only caller is the invite badge and it
+     * runs on every navigation: see [FriendshipService.pendingCount].
+     */
+    fun countByAddresseeIdAndStatus(addresseeId: UUID, status: FriendshipStatus): Long
+
     @Query(
         "SELECT f FROM Friendship f " +
             "WHERE f.status = :status AND (f.requesterId = :userId OR f.addresseeId = :userId)"

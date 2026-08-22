@@ -3,6 +3,7 @@ package com.skydex.api.controllers
 import com.skydex.api.dto.FriendRequestBody
 import com.skydex.api.dto.FriendRequestResponse
 import com.skydex.api.dto.FriendResponse
+import com.skydex.api.dto.PendingRequestCountResponse
 import com.skydex.api.models.User
 import com.skydex.api.services.FriendshipService
 import jakarta.validation.Valid
@@ -33,12 +34,28 @@ class FriendController(private val friendships: FriendshipService) {
     fun incomingRequests(@AuthenticationPrincipal currentUser: User): List<FriendRequestResponse> =
         friendships.incoming(currentUser)
 
+    /**
+     * The number behind the invite badge. Separate from [incomingRequests] because every screen
+     * carrying the bottom bar asks for this on navigation and needs a number, not a guest list.
+     */
+    @GetMapping("/requests/count")
+    fun pendingRequestCount(
+        @AuthenticationPrincipal currentUser: User
+    ): PendingRequestCountResponse =
+        PendingRequestCountResponse(friendships.pendingCount(currentUser))
+
     @PostMapping("/requests/{id}/accept")
     fun acceptRequest(
         @AuthenticationPrincipal currentUser: User,
         @PathVariable id: UUID
     ): FriendResponse = friendships.accept(currentUser, id)
 
+    /**
+     * Declines a pending request **and** removes an accepted friendship — one route, because the
+     * operation is the same delete and either party may perform it. See `FriendshipService.decline`.
+     * The id comes from `FriendRequestResponse.id` in the first case and
+     * `FriendResponse.friendshipId` in the second; both are the `friendships` row id.
+     */
     @DeleteMapping("/requests/{id}")
     fun declineRequest(
         @AuthenticationPrincipal currentUser: User,

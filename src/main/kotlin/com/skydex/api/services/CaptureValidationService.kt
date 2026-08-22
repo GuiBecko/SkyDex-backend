@@ -1,7 +1,9 @@
 package com.skydex.api.services
 
 import com.skydex.api.domain.Phenomenon
+import com.skydex.api.domain.UnconfirmedReason
 import com.skydex.api.domain.ValidationStatus
+import com.skydex.api.errors.ServiceUnavailableException
 import org.springframework.stereotype.Service
 import java.time.Duration
 import java.time.Instant
@@ -11,61 +13,71 @@ import java.time.format.DateTimeParseException
 import kotlin.math.abs
 
 data class ValidationResult(
+    val phenomenon: Phenomenon,
     val status: ValidationStatus,
-    val observedWeatherCode: Int?,
-    val xpAwarded: Int
+    val observedWeatherCode: Int,
+    val xpAwarded: Int,
+    val unconfirmedReason: UnconfirmedReason?
 )
 
 /**
- * Decides whether a capture earns XP: the claim has to match the weather record for that place and
- * time, and the place has to be one the caller could plausibly be.
+ * Decides what a capture *is* and whether it earns XP.
  *
- * The `locationIsMock` half is worth stating plainly, because it is weaker than it sounds. It is
- * the CLIENT's own report that Android flagged the fix as coming from a mock provider, so it stops
- * a casual mock-GPS app installed alongside our unmodified client and nothing more — a modified
- * client simply sends `false`. It earns its place because casual mock-GPS is what most cheating
- * actually looks like, and it costs one boolean. It becomes trustworthy only if device attestation
- * (Play Integrity) is ever added, at which point the flag would be worth acting on more harshly
- * than "no XP". Do not write code elsewhere that treats it as proof of anything.
+ * ## What changed, and why it is not the same service it was
+ *
+ * This used to check a phenomenon the **user** claimed against Open-Meteo's record. It no longer
+ * does, because the user no longer claims one: Open-Meteo's weather code IS the phenomenon. That
+ * turns a check that could fail softly into a lookup that cannot fail at all — `weather_events
+ * .phenomenon` is NOT NULL, so a missing answer is not an UNCONFIRMED capture, it is no capture.
+ * Every path that used to return "unconfirmed, we could not tell" now throws
+ * [ServiceUnavailableException] and the controller answers 503.
+ *
+ * That is cheap and it is the reason this ordering is safe: `PhotoProvenanceService.consume` runs
+ * inside `CaptureCommitService.commit`, which is reached only *after* this returns. A capture that
+ * dies here has spent nothing, so the client retries with the same photo for the remainder of its
+ * thirty-minute `MAX_AGE`.
+ *
+ * ## The Open-Meteo call is no longer optional
+ *
+ * The previous version ran the position checks first, so an implausible capture cost no upstream
+ * request. It cannot any more: even an implausible capture needs a phenomenon to be stored under.
+ * The saving is gone and the ordering is inverted — weather first, verdict second.
+ *
+ * ## `locationIsMock` is still worth exactly what the client's honesty is worth
+ *
+ * It is the CLIENT's report that Android flagged the fix as coming from a mock provider, so it
+ * stops a casual mock-GPS app installed alongside our unmodified client and nothing more. It earns
+ * its place because casual mock-GPS is what most cheating actually looks like and it costs one
+ * boolean. Do not write code elsewhere that treats it as proof of anything.
+ *
+ * [previous] is read without synchronisation, so the travel verdict reached here is provisional and
+ * this is NOT the place that enforces it. `CaptureCommitService.commit` re-checks travel against the
+ * trail re-read under a row lock and can downgrade a CONFIRMED result on the way out.
  */
 @Service
-class CaptureValidationService(private val openMeteoClient: OpenMeteoClient) {
+class CaptureValidationService(
+    private val openMeteoClient: OpenMeteoClient,
+    private val authenticity: PhotoAuthenticityService
+) {
 
     /**
-     * Checks a capture claim against Open-Meteo's hourly record for that place and time, and the
-     * claimed position against where the caller could plausibly have got to.
+     * The phenomenon Open-Meteo recorded for this place and time, and whether the capture earns XP.
      *
-     * Never throws: an unreachable upstream, a capture outside the forecast window, an implausible
-     * position or a mocked one all come back UNCONFIRMED with zero XP. Nothing here rejects a
-     * capture — the user keeps the row and the photo, they just earn nothing for it — because the
-     * same status also means "our upstream was down", and losing a real capture to that would be
-     * worse than paying nothing for a fake one.
-     *
-     * The two position checks run FIRST, before any network call, so a capture that cannot be
-     * confirmed on position alone costs no Open-Meteo request. They return a null
-     * `observedWeatherCode` for the same reason: nothing was observed, because nothing was asked.
-     *
-     * [previous] is read without synchronisation, so the travel verdict reached here is provisional
-     * and this is NOT the place that enforces it. `CaptureCommitService.commit` re-checks travel
-     * against the trail re-read under a row lock, and can downgrade a CONFIRMED result on the way
-     * out. Doing it here as well is an optimisation, not a duplicate: it is what keeps the
-     * overwhelmingly common implausible case from paying for an Open-Meteo call first.
+     * @param photoScores the cached `phenomenon_scores` from the photo's upload, or null for a
+     *   photo that was never analysed. Null skips stage 2 rather than failing it.
+     * @throws ServiceUnavailableException Open-Meteo did not answer, answered with no usable slot
+     *   near [capturedAt], or answered with a code no [Phenomenon] covers.
      */
     fun validate(
-        claimed: Phenomenon,
         latitude: Double,
         longitude: Double,
         capturedAt: Instant,
         previous: LastKnownPosition?,
-        locationIsMock: Boolean
+        locationIsMock: Boolean,
+        photoScores: Map<String, Double>?
     ): ValidationResult {
-        if (locationIsMock) return unconfirmed(null)
-        if (!TravelPlausibility.isReachable(previous, latitude, longitude, capturedAt)) {
-            return unconfirmed(null)
-        }
-
         val hourly = openMeteoClient.fetchHourlyForecast(latitude, longitude)?.hourly
-            ?: return unconfirmed(null)
+            ?: throw ServiceUnavailableException("The weather service is unavailable right now")
 
         var nearestIndex = -1
         var nearestDistance = Long.MAX_VALUE
@@ -81,35 +93,51 @@ class CaptureValidationService(private val openMeteoClient: OpenMeteoClient) {
         }
 
         if (nearestIndex < 0 || nearestDistance > MAX_SKEW.toMillis()) {
-            return unconfirmed(null)
+            throw ServiceUnavailableException("The weather service is unavailable right now")
         }
 
-        val observedCode = hourly.weatherCode[nearestIndex] ?: return unconfirmed(null)
-        val observed = Phenomenon.fromWeatherCode(observedCode)
+        val observedCode = hourly.weatherCode[nearestIndex]
+            ?: throw ServiceUnavailableException("The weather service is unavailable right now")
 
-        return if (observed == claimed) {
-            ValidationResult(ValidationStatus.CONFIRMED, observedCode, claimed.rarity.xp)
-        } else {
-            ValidationResult(ValidationStatus.UNCONFIRMED, observedCode, 0)
+        // Every code Open-Meteo documents maps to a species, so a null here is an upstream anomaly
+        // and not something the user did. There is no honest row to write without a phenomenon.
+        val phenomenon = Phenomenon.fromWeatherCode(observedCode)
+            ?: throw ServiceUnavailableException("The weather service is unavailable right now")
+
+        // Absent means daylight. Night only ever *skips* the photo check, so defaulting the other
+        // way would silently disable stage 2 for every capture the moment the field went missing.
+        val isDay = hourly.isDay.getOrNull(nearestIndex)?.let { it == 1 } ?: true
+
+        val reason = when {
+            locationIsMock -> UnconfirmedReason.MOCK_LOCATION
+            !TravelPlausibility.isReachable(previous, latitude, longitude, capturedAt) ->
+                UnconfirmedReason.IMPLAUSIBLE_TRAVEL
+            authenticity.contradicts(phenomenon, photoScores, isDay) ->
+                UnconfirmedReason.PHOTO_CONTRADICTS_WEATHER
+            else -> null
         }
+
+        return ValidationResult(
+            phenomenon = phenomenon,
+            status = if (reason == null) ValidationStatus.CONFIRMED else ValidationStatus.UNCONFIRMED,
+            observedWeatherCode = observedCode,
+            xpAwarded = if (reason == null) phenomenon.rarity.xp else 0,
+            unconfirmedReason = reason
+        )
     }
 
-    /** Open-Meteo returns "2026-08-07T14:00" with no offset; we requested timezone=UTC. */
+    /** Open-Meteo returns "2026-08-16T14:00" with no offset; we requested timezone=UTC. */
     private fun parseSlot(raw: String): Instant? = try {
         LocalDateTime.parse(raw).toInstant(ZoneOffset.UTC)
     } catch (e: DateTimeParseException) {
         null
     }
 
-    private fun unconfirmed(observedCode: Int?) =
-        ValidationResult(ValidationStatus.UNCONFIRMED, observedCode, 0)
-
     private companion object {
         /**
          * Covers hourly granularity plus slack for a truncated or gap-ridden upstream response —
-         * NOT phone clock skew. There is no phone clock in this path: [capturedAt] is stamped by
-         * the server (`WeatherEventController.create` reads `Instant.now()` once, before this is
-         * ever called), so a client's clock can never influence it.
+         * NOT phone clock skew. There is no phone clock in this path: `capturedAt` is stamped by
+         * the server before this is ever called, so a client's clock can never influence it.
          */
         val MAX_SKEW: Duration = Duration.ofMinutes(90)
     }

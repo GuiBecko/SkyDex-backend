@@ -1,5 +1,6 @@
 package com.skydex.api.dto
 
+import com.fasterxml.jackson.annotation.JsonInclude
 import com.skydex.api.models.User
 import com.skydex.api.models.WeatherEvent
 import jakarta.validation.constraints.DecimalMax
@@ -36,8 +37,21 @@ data class CreateWeatherEventRequest(
     @field:DecimalMax(value = "180.0", message = "must be between -180 and 180")
     val longitude: Double,
 
-    @field:NotBlank(message = "Phenomenon is required")
-    val phenomenon: String,
+    /**
+     * **Accepted and ignored.** Kept in the DTO purely so an already-installed client that still
+     * sends it is not answered with a 400.
+     *
+     * The user no longer chooses a phenomenon: Open-Meteo's weather code for the capture's place
+     * and time decides it, and `CaptureValidationService` reads it from there. Removing this field
+     * would make every capture from the shipped app fail; validating it would make them fail more
+     * politely. Neither is better than ignoring it.
+     *
+     * This is the same accepted-and-ignored shape `latitude` and `longitude` already have on the
+     * update handler — `capturedAt` is not a field on this DTO at all, since the server stamps the
+     * capture time itself and never reads one from the client. It is pinned by
+     * `WeatherEventControllerTest`.
+     */
+    val phenomenon: String? = null,
 
     /**
      * The client's own report that the coordinates above came from a mock location provider
@@ -68,6 +82,24 @@ data class WeatherEventResponse(
     val phenomenonName: String,
     val rarity: String,
     val validationStatus: String,
+    /**
+     * Why [validationStatus] is UNCONFIRMED, or null. Serialised as the enum name so the client
+     * can branch on it; the Portuguese copy for each reason lives in the app, not here.
+     *
+     * Omitted from the body entirely when null, rather than sent as an explicit `null`. The
+     * inclusion rule is on this property alone and NOT on `spring.jackson.default-property-
+     * inclusion`: that setting is global, and turning it on would silently drop
+     * `observedWeatherCode` and every other nullable field from every endpoint in the API — a
+     * change to responses nobody asked to change, some of which existing tests assert on.
+     *
+     * Also omitted — regardless of [validationStatus] — from a row whose [userId] is not the
+     * viewer's own. The reason exists to tell the capture's author what to fix; a friend reading
+     * it in their feed learns nothing actionable and only sees an accusation about someone else.
+     * `validationStatus` stays visible either way, so the not-confirmed badge still works. See
+     * [from]'s `viewerId` parameter for where this is enforced.
+     */
+    @field:JsonInclude(JsonInclude.Include.NON_NULL)
+    val unconfirmedReason: String?,
     val xpAwarded: Int
 ) {
     companion object {
@@ -90,8 +122,14 @@ data class WeatherEventResponse(
          * The `startsWith("/")` guard keeps this idempotent and leaves an already-absolute value
          * alone, which matters for the externally-hosted URLs captures could carry before uploads
          * existed.
+         *
+         * [viewerId] defaults to null, which means "the viewer is [event]'s own author" — true of
+         * every call site except `FeedService`, where a friend's row can be shown to someone who is
+         * not its author. Passing null there instead of `author.id` would be wrong in the same
+         * direction every time (never redact), so the default is intentionally the shape every
+         * other caller already has rather than a value they would have to supply correctly by hand.
          */
-        fun from(event: WeatherEvent, author: User, baseUrl: String) = WeatherEventResponse(
+        fun from(event: WeatherEvent, author: User, baseUrl: String, viewerId: UUID? = null) = WeatherEventResponse(
             id = event.id!!,
             title = event.title,
             description = event.description,
@@ -106,6 +144,11 @@ data class WeatherEventResponse(
             phenomenonName = event.phenomenon.displayName,
             rarity = event.phenomenon.rarity.name,
             validationStatus = event.validationStatus.name,
+            unconfirmedReason = if (viewerId == null || viewerId == event.userId) {
+                event.unconfirmedReason?.name
+            } else {
+                null
+            },
             xpAwarded = event.xpAwarded
         )
     }

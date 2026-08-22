@@ -1,12 +1,15 @@
 package com.skydex.api.controller
 
+import com.skydex.api.domain.UnconfirmedReason
 import com.skydex.api.domain.ValidationStatus
 import com.skydex.api.dto.CreateWeatherEventRequest
 import com.skydex.api.dto.HourlyData
 import com.skydex.api.dto.OpenMeteoResponse
+import com.skydex.api.dto.VisionAnalysis
 import com.skydex.api.models.User
 import com.skydex.api.services.BadgeService
 import com.skydex.api.services.OpenMeteoClient
+import com.skydex.api.services.VisionClient
 import com.skydex.api.support.IntegrationTestBase
 import com.skydex.api.support.authHeaderFor
 import com.skydex.api.support.persistEvent
@@ -25,6 +28,7 @@ import org.mockito.Mockito.never
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
+import org.mockito.kotlin.any
 import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.boot.test.mock.mockito.SpyBean
 import org.springframework.http.MediaType
@@ -57,6 +61,15 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     @SpyBean
     private lateinit var badgeServiceSpy: BadgeService
 
+    /**
+     * Only one test in this class (`stores a photo url relative but returns it absolute`) drives
+     * `POST /api/photos` for real rather than seeding a row with `persistUploadedPhoto`; everything
+     * else in `PhotoController.upload` since Task 3 now depends on this answering, so it is stubbed
+     * for every test here rather than only where it is exercised.
+     */
+    @MockBean
+    private lateinit var vision: VisionClient
+
     private lateinit var testUser: User
     private lateinit var authHeader: String
 
@@ -65,6 +78,22 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     fun setUpFixtures() {
         testUser = persistUser(name = "Test Pilot", email = "pilot@skydex.com")
         authHeader = authHeaderFor(testUser)
+        // The full six-group map the brief specified, STORM-leaning at 0.80 with the remainder split
+        // evenly across the other five groups (the same shape `PhotoAuthenticityServiceTest`'s
+        // `confident` helper builds). A single-key stub would only pass because that one key
+        // happened to sit in STORM's reconcilable set against the `code = 95` forecast every
+        // Task 6 test here stubs — tightening the contradiction matrix would then fail unrelated
+        // tests for a reason that has nothing to do with what they assert.
+        `when`(vision.analyze(any(), any())).thenReturn(
+            VisionAnalysis(
+                outdoorScore = 0.94,
+                phenomenonScores = mapOf(
+                    "CLEAR" to 0.04, "CLOUDY" to 0.04, "FOG" to 0.04,
+                    "RAIN" to 0.04, "SNOW" to 0.04, "STORM" to 0.80
+                ),
+                model = "clip-vit-b-32-zeroshot-v1"
+            )
+        )
     }
 
     /**
@@ -92,6 +121,12 @@ class WeatherEventControllerTest : IntegrationTestBase() {
 
     @Test
     fun `registers a new event and returns 201 with a generated id`() {
+        // Open-Meteo is now a mandatory dependency of every capture (Task 5), not merely consulted
+        // when position and mock-location pass first as it used to be. Before Task 6 this test
+        // passed with no stub at all, because an unstubbed Open-Meteo returned null and the old
+        // service treated that as a soft UNCONFIRMED rather than a 503. It is not the phenomenon
+        // that this test cares about, so the stub is unremarkable — but it has to be there.
+        thunderstormAt(-23.55, -46.63)
         val request = CreateWeatherEventRequest(
             title = "Aurora Borealis",
             description = "Bright green lights in the night sky.",
@@ -186,6 +221,9 @@ class WeatherEventControllerTest : IntegrationTestBase() {
      */
     @Test
     fun `stores a photo url relative but returns it absolute`() {
+        // See the comment on `registers a new event...` above: Open-Meteo is now mandatory, so an
+        // unstubbed call would 503 rather than degrade to UNCONFIRMED as it used to.
+        thunderstormAt(-23.55, -46.63)
         val jpegBytes = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xD9.toByte())
         val part = MockMultipartFile("file", "storm.jpg", MediaType.IMAGE_JPEG_VALUE, jpegBytes)
 
@@ -369,6 +407,8 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     @Test
     fun `stores the coordinates and stamps the capture time on the server`() {
         val user = persistUser(email = "geo@skydex.com")
+        // Open-Meteo is now mandatory; see the comment on `registers a new event...` above.
+        thunderstormAt(-30.0346, -51.2177)
         val before = Instant.now()
 
         val payload = CreateWeatherEventRequest(
@@ -456,6 +496,8 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     @Test
     fun `accepts a longitude that is only valid on the longitude scale`() {
         val user = persistUser(email = "meridian@skydex.com")
+        // Open-Meteo is now mandatory; see the comment on `registers a new event...` above.
+        thunderstormAt(-25.0, 120.0)
 
         // 120 deg E is a real place (western Australia) and the ONLY value that catches the bug
         // this pair of tests exists for: latitude's bounds copy-pasted onto longitude. A rejection
@@ -557,6 +599,8 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     @Test
     fun `ignores a capture time supplied by the client`() {
         val user = persistUser(email = "liar@skydex.com")
+        // Open-Meteo is now mandatory; see the comment on `registers a new event...` above.
+        thunderstormAt(0.0, 0.0)
 
         // Hand-built JSON, because the DTO has no `capturedAt` field to set. A gamified app pays
         // XP and rare badges for matching real weather, so a client that could name the hour
@@ -629,8 +673,20 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             .andExpect(jsonPath("$.xpAwarded").value(60))
     }
 
+    /**
+     * Formerly `saves the capture but awards no xp when the claim is contradicted`: it posted a
+     * "HAILSTORM" claim against a stubbed forecast of code 0 and expected UNCONFIRMED with 0 XP,
+     * because the old service compared the user's claim against Open-Meteo's record and scored a
+     * mismatch as unconfirmed. That comparison is gone — there is no claim left to contradict, only
+     * a phenomenon Open-Meteo reports and a photo that may or may not be consistent with it.
+     * `freshPhotoFor` seeds an `UploadedPhoto` row with no cached vision scores, so stage 2 has
+     * nothing to compare either (`PhotoAuthenticityService.contradicts` reads `null` as no opinion).
+     * With nothing left to disagree with the weather, this capture is CONFIRMED — for CLEAR_SKY,
+     * what code 0 actually maps to, not the HAILSTORM the client still sent. That is the feature:
+     * the claim is well and truly ignored, all the way down to the reward it earns.
+     */
     @Test
-    fun `saves the capture but awards no xp when the claim is contradicted`() {
+    fun `ignores a contradicted claim and confirms the phenomenon open-meteo actually reported`() {
         val user = persistUser(email = "optimist@skydex.com")
 
         `when`(openMeteoClient.fetchHourlyForecast(-30.0346, -51.2177)).thenReturn(
@@ -661,43 +717,17 @@ class WeatherEventControllerTest : IntegrationTestBase() {
                 .content(objectMapper.writeValueAsString(payload))
         )
             .andExpect(status().isCreated)
-            .andExpect(jsonPath("$.validationStatus").value("UNCONFIRMED"))
-            .andExpect(jsonPath("$.xpAwarded").value(0))
+            .andExpect(jsonPath("$.phenomenon").value("CLEAR_SKY"))
+            .andExpect(jsonPath("$.validationStatus").value("CONFIRMED"))
+            .andExpect(jsonPath("$.xpAwarded").value(10))
     }
 
-    @Test
-    fun `rejects a phenomenon that is not in the catalog without consuming the photo`() {
-        val user = persistUser(email = "inventor@skydex.com")
-        // A real, valid, unspent photo of this user's, so the rejection can only come from the
-        // phenomenon. It also makes the rule explicit rather than incidental: a request thrown out
-        // for something unrelated to the photo must give the photo back, which today holds because
-        // the phenomenon parse sits above the provenance check in `create` and nothing else pinned
-        // that ordering.
-        val photo = persistUploadedPhoto(user)
-
-        val payload = CreateWeatherEventRequest(
-            title = "Chuva de sapos",
-            description = "Aconteceu mesmo",
-            photoUrl = "/api/photos/${photo.filename}",
-            latitude = -30.0346,
-            longitude = -51.2177,
-            phenomenon = "FROG_RAIN"
-        )
-
-        mockMvc.perform(
-            post("/api/events")
-                .header("Authorization", authHeaderFor(user))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(payload))
-        )
-            .andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.error").value("Unknown phenomenon: FROG_RAIN"))
-
-        assertNull(
-            uploadedPhotoRepository.findByFilename(photo.filename)!!.consumedAt,
-            "a request rejected for its phenomenon burnt the caller's photo"
-        )
-    }
+    // `rejects a phenomenon that is not in the catalog without consuming the photo` was deleted
+    // here (Task 6). It asserted a 400 with "Unknown phenomenon: FROG_RAIN" for a phenomenon the
+    // catalog does not recognise. That case no longer exists: `phenomenon` is accepted and ignored
+    // on every request now (`CreateWeatherEventRequest.phenomenon`'s KDoc explains why an
+    // already-installed client must never be 400'd for it), so there is nothing left to reject and
+    // no scenario for this test to exercise.
 
     @Test
     fun `editing a capture does not re-roll its validation or xp`() {
@@ -766,6 +796,8 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     @Test
     fun `accepts a capture citing a photo the caller just uploaded and marks it spent`() {
         val photo = persistUploadedPhoto(testUser)
+        // Open-Meteo is now mandatory; see the comment on `registers a new event...` above.
+        thunderstormAt(-30.0346, -51.2177)
 
         mockMvc.perform(
             post("/api/events")
@@ -838,6 +870,9 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     @Test
     fun `refuses a capture citing a photo an earlier capture already spent`() {
         val photo = persistUploadedPhoto(testUser)
+        // Open-Meteo is now mandatory for the first, successful POST below; see the comment on
+        // `registers a new event...` above. The second POST never reaches it (asserted below).
+        thunderstormAt(-30.0346, -51.2177)
         val body = captureCiting("/api/photos/${photo.filename}")
 
         mockMvc.perform(
@@ -887,6 +922,8 @@ class WeatherEventControllerTest : IntegrationTestBase() {
     @Test
     fun `accepts a capture citing a photo uploaded twenty-nine minutes ago`() {
         val nearlyStale = persistUploadedPhoto(testUser, uploadedAt = Instant.now().minus(29, ChronoUnit.MINUTES))
+        // Open-Meteo is now mandatory; see the comment on `registers a new event...` above.
+        thunderstormAt(-30.0346, -51.2177)
 
         mockMvc.perform(
             post("/api/events")
@@ -1057,10 +1094,15 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         )
             .andExpect(status().isCreated)
             .andExpect(jsonPath("$.validationStatus").value("UNCONFIRMED"))
+            .andExpect(jsonPath("$.unconfirmedReason").value("MOCK_LOCATION"))
             .andExpect(jsonPath("$.xpAwarded").value(0))
 
-        // Nothing was scored, so nothing was asked upstream.
-        verify(openMeteoClient, never()).fetchHourlyForecast(anyDouble(), anyDouble())
+        // Formerly asserted `never()`: the old service checked `locationIsMock` before any network
+        // call, so a mocked location cost no Open-Meteo request. Task 6 inverts that ordering on
+        // purpose (see `CaptureValidationService`'s KDoc, "The Open-Meteo call is no longer
+        // optional") — even a mock-located capture needs a phenomenon to store, since
+        // `weather_events.phenomenon` is NOT NULL, so the call now always happens.
+        verify(openMeteoClient, times(1)).fetchHourlyForecast(anyDouble(), anyDouble())
     }
 
     /**
@@ -1096,6 +1138,10 @@ class WeatherEventControllerTest : IntegrationTestBase() {
      *
      * `CaptureCommitService` re-reads the row under a lock and downgrades, which is what makes the
      * outcome UNCONFIRMED rather than a confirmed teleport.
+     *
+     * The reason is asserted too, not just status and xp: `CaptureCommitService.commit` writes
+     * `IMPLAUSIBLE_TRAVEL` for this branch, and nothing else in the suite pinned that assignment —
+     * deleting it left the suite green.
      */
     @Test
     fun `downgrades a capture whose trail moved while the forecast was being fetched`() {
@@ -1119,7 +1165,51 @@ class WeatherEventControllerTest : IntegrationTestBase() {
         postCapture(user, thunderstormCapture(freshPhotoFor(user), tokyo))
             .andExpect(status().isCreated)
             .andExpect(jsonPath("$.validationStatus").value("UNCONFIRMED"))
+            .andExpect(jsonPath("$.unconfirmedReason").value("IMPLAUSIBLE_TRAVEL"))
             .andExpect(jsonPath("$.xpAwarded").value(0))
+    }
+
+    /**
+     * The other half of the same line: `CaptureCommitService.commit` must NOT relabel a capture
+     * already marked `MOCK_LOCATION` as `IMPLAUSIBLE_TRAVEL` just because the locked re-check also
+     * disagrees. `MOCK_LOCATION` is the more specific, more actionable diagnosis — a mocked position
+     * failing a travel check is a consequence of the mocking, not an independent finding — so the
+     * commit-time overwrite must leave it alone.
+     *
+     * Same interleaving as the test above (the trail moves from inside the forecast stub), but this
+     * capture also reports `locationIsMock = true`, so `CaptureValidationService` provisionally
+     * marks it `MOCK_LOCATION` before the network call. The locked re-check then also finds the
+     * (mocked) claimed position unreachable from where the trail moved to. An unconditional
+     * overwrite would rewrite the reason to `IMPLAUSIBLE_TRAVEL`; the guarded one keeps `MOCK_LOCATION`.
+     */
+    @Test
+    fun `does not relabel a mock-located capture as implausible travel after the locked re-check`() {
+        val user = persistUser(email = "mocked-interleaved@skydex.com")
+
+        `when`(openMeteoClient.fetchHourlyForecast(tokyo.first, tokyo.second)).thenAnswer {
+            recordTrail(user, portoAlegre.first, portoAlegre.second, Instant.now())
+            OpenMeteoResponse(
+                latitude = tokyo.first,
+                longitude = tokyo.second,
+                hourly = HourlyData(
+                    time = listOf(currentSlotLabel()),
+                    temperatureCelsius = listOf(19.0),
+                    weatherCode = listOf(95)
+                )
+            )
+        }
+
+        postCapture(
+            user,
+            thunderstormCapture(freshPhotoFor(user), tokyo, locationIsMock = true)
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.validationStatus").value("UNCONFIRMED"))
+            .andExpect(jsonPath("$.unconfirmedReason").value("MOCK_LOCATION"))
+            .andExpect(jsonPath("$.xpAwarded").value(0))
+
+        val stored = weatherEventRepository.findAll().first { it.userId == user.id }
+        assertEquals(UnconfirmedReason.MOCK_LOCATION, stored.unconfirmedReason)
     }
 
     /**
@@ -1246,5 +1336,253 @@ class WeatherEventControllerTest : IntegrationTestBase() {
             uploadedPhotoRepository.findByFilename(photoUrl.substringAfterLast('/'))?.consumedAt,
             "the photo should have been spent by the commit that already succeeded"
         )
+    }
+
+    // --- Task 6: Open-Meteo decides the phenomenon, and a 503 must cost nothing ------------------
+
+    @Test
+    fun `takes the phenomenon from open-meteo and ignores what the client sent`() {
+        // The shipped Android app still sends `phenomenon`. It must be accepted and ignored, not
+        // rejected: making it a 400 would break every capture from an app already installed.
+        stubForecast(code = 95)   // thunderstorm
+        val user = persistUser(email = "ignored@skydex.com")
+        val photoUrl = uploadPhotoFor(user)
+
+        val body = mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {"title":"t","description":"d","photoUrl":"$photoUrl",
+                     "latitude":-30.0,"longitude":-51.0,
+                     "phenomenon":"CLEAR_SKY","locationIsMock":false}
+                    """.trimIndent()
+                )
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.phenomenon").value("THUNDERSTORM"))
+            .andReturn().response.contentAsString
+
+        assertEquals("THUNDERSTORM", objectMapper.readTree(body).get("phenomenon").asText())
+    }
+
+    @Test
+    fun `accepts a request with no phenomenon field at all`() {
+        stubForecast(code = 95)
+        val user = persistUser(email = "nophenomenon@skydex.com")
+        val photoUrl = uploadPhotoFor(user)
+
+        mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {"title":"t","description":"d","photoUrl":"$photoUrl",
+                     "latitude":-30.0,"longitude":-51.0,"locationIsMock":false}
+                    """.trimIndent()
+                )
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.phenomenon").value("THUNDERSTORM"))
+    }
+
+    @Test
+    fun `answers 503 without spending the photo when open-meteo is down`() {
+        stubForecastUnavailable()
+        val user = persistUser(email = "meteodown@skydex.com")
+        val photoUrl = uploadPhotoFor(user)
+
+        mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {"title":"t","description":"d","photoUrl":"$photoUrl",
+                     "latitude":-30.0,"longitude":-51.0,"locationIsMock":false}
+                    """.trimIndent()
+                )
+        )
+            .andExpect(status().isServiceUnavailable)
+
+        // The whole retry story depends on this. `consume` runs inside CaptureCommitService,
+        // which is never reached, so the photo is still citable.
+        val stored = uploadedPhotoRepository.findByFilename(photoUrl.substringAfterLast('/'))!!
+        assertNull(stored.consumedAt)
+        assertEquals(0, weatherEventRepository.count())
+    }
+
+    @Test
+    fun `retrying after a 503 succeeds with the same photo`() {
+        val user = persistUser(email = "retry@skydex.com")
+        val photoUrl = uploadPhotoFor(user)
+        val payload = """
+            {"title":"t","description":"d","photoUrl":"$photoUrl",
+             "latitude":-30.0,"longitude":-51.0,"locationIsMock":false}
+        """.trimIndent()
+
+        stubForecastUnavailable()
+        mockMvc.perform(
+            post("/api/events").header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON).content(payload)
+        ).andExpect(status().isServiceUnavailable)
+
+        stubForecast(code = 95)
+        mockMvc.perform(
+            post("/api/events").header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON).content(payload)
+        ).andExpect(status().isCreated)
+    }
+
+    @Test
+    fun `reports why a capture was not confirmed`() {
+        stubForecast(code = 95)
+        val user = persistUser(email = "mocked@skydex.com")
+        val photoUrl = uploadPhotoFor(user)
+
+        mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {"title":"t","description":"d","photoUrl":"$photoUrl",
+                     "latitude":-30.0,"longitude":-51.0,"locationIsMock":true}
+                    """.trimIndent()
+                )
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.validationStatus").value("UNCONFIRMED"))
+            .andExpect(jsonPath("$.unconfirmedReason").value("MOCK_LOCATION"))
+            .andExpect(jsonPath("$.xpAwarded").value(0))
+    }
+
+    @Test
+    fun `a confirmed capture reports no reason`() {
+        stubForecast(code = 95)
+        val user = persistUser(email = "confirmed@skydex.com")
+        val photoUrl = uploadPhotoFor(user)
+
+        val body = mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {"title":"t","description":"d","photoUrl":"$photoUrl",
+                     "latitude":-30.0,"longitude":-51.0,"locationIsMock":false}
+                    """.trimIndent()
+                )
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.validationStatus").value("CONFIRMED"))
+            .andExpect(jsonPath("$.unconfirmedReason").doesNotExist())
+            .andReturn().response.contentAsString
+
+        // `doesNotExist()` above also passes for an explicit JSON `null`, so on its own it cannot
+        // tell "the field was omitted" (what @JsonInclude(NON_NULL) is supposed to guarantee) apart
+        // from "the field was sent as null". Checking the raw body pins the actual annotation.
+        assertFalse(
+            body.contains("unconfirmedReason"),
+            "expected unconfirmedReason to be omitted entirely, got: $body"
+        )
+    }
+
+    /**
+     * The end-to-end test for stage 2 of photo validation — the anti-fraud feature this whole
+     * integration exists to add. Every other test in this class that reaches
+     * `PhotoAuthenticityService.contradicts` does so with a photo group that is reconcilable with
+     * the stubbed weather, so nothing here previously exercised a genuine contradiction; deleting
+     * `photoScores = photoAnalysis.deserialise(photo.visionScores)` in
+     * `WeatherEventController.create` (replacing it with `null`) left the whole suite green.
+     *
+     * `uploadPhotoFor` drives a real `POST /api/photos`, so the photo's cached scores are the
+     * `@BeforeEach` fixture's STORM-leaning six-group map (0.80 STORM, the rest at 0.04 each) —
+     * confident enough to clear both gates (`expected < 0.10`, `top > 0.70`). Stubbing `code = 0`
+     * makes the expected group CLEAR, and CLEAR's row in the contradiction matrix blocks every
+     * other group, STORM included — the strictest, cleanest pairing available.
+     *
+     * The capture is KEPT, not rejected: 201, UNCONFIRMED, and the specific reason, both in the
+     * response and in the stored row.
+     */
+    @Test
+    fun `flags a capture whose photo confidently contradicts the observed weather`() {
+        stubForecast(code = 0) // CLEAR_SKY; CLEAR admits only CLEAR in the contradiction matrix
+        val user = persistUser(email = "contradicted@skydex.com")
+        val photoUrl = uploadPhotoFor(user) // scored STORM 0.80 by the shared vision fixture
+
+        val body = mockMvc.perform(
+            post("/api/events")
+                .header("Authorization", authHeaderFor(user))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {"title":"t","description":"d","photoUrl":"$photoUrl",
+                     "latitude":-30.0,"longitude":-51.0,"locationIsMock":false}
+                    """.trimIndent()
+                )
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.phenomenon").value("CLEAR_SKY"))
+            .andExpect(jsonPath("$.validationStatus").value("UNCONFIRMED"))
+            .andExpect(jsonPath("$.unconfirmedReason").value("PHOTO_CONTRADICTS_WEATHER"))
+            .andExpect(jsonPath("$.xpAwarded").value(0))
+            .andReturn().response.contentAsString
+
+        val id = UUID.fromString(objectMapper.readTree(body).get("id").asText())
+        val stored = weatherEventRepository.findById(id).orElseThrow()
+        assertEquals(UnconfirmedReason.PHOTO_CONTRADICTS_WEATHER, stored.unconfirmedReason)
+        assertEquals(ValidationStatus.UNCONFIRMED, stored.validationStatus)
+        assertEquals(0, stored.xpAwarded)
+    }
+
+    /**
+     * Open-Meteo reporting [code] for the hour the capture will be stamped in.
+     *
+     * `anyDouble()`, not exact coordinates: these tests post `latitude: -30.0, longitude: -51.0`
+     * (round numbers, distinct from the `-30.0346, -51.2177` idiom the pre-existing tests in this
+     * class use), and an exact-coordinate stub that does not match would make `fetchHourlyForecast`
+     * return null and the capture 503 — which looks exactly like the Open-Meteo-outage test passing
+     * for the right reason when it is actually passing for the wrong one.
+     */
+    private fun stubForecast(code: Int) {
+        // Truncated to the hour so the slot is always within CaptureValidationService's 90-minute
+        // window of `Instant.now()`, whatever minute the suite happens to run at.
+        val slot = LocalDateTime.ofInstant(Instant.now(), ZoneOffset.UTC)
+            .truncatedTo(ChronoUnit.HOURS)
+            .toString()
+
+        `when`(openMeteoClient.fetchHourlyForecast(anyDouble(), anyDouble())).thenReturn(
+            OpenMeteoResponse(
+                latitude = -30.0,
+                longitude = -51.0,
+                hourly = HourlyData(
+                    time = listOf(slot),
+                    temperatureCelsius = listOf(21.0),
+                    weatherCode = listOf(code),
+                    isDay = listOf(1)
+                )
+            )
+        )
+    }
+
+    private fun stubForecastUnavailable() {
+        `when`(openMeteoClient.fetchHourlyForecast(anyDouble(), anyDouble())).thenReturn(null)
+    }
+
+    /** Uploads a minimal JPEG as [user] and returns the relative path the server assigned. */
+    private fun uploadPhotoFor(user: User): String {
+        val part = MockMultipartFile(
+            "file", "sky.jpg", MediaType.IMAGE_JPEG_VALUE,
+            byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xD9.toByte())
+        )
+        val body = mockMvc.perform(
+            multipart("/api/photos").file(part).header("Authorization", authHeaderFor(user))
+        )
+            .andExpect(status().isCreated)
+            .andReturn().response.contentAsString
+        return objectMapper.readTree(body).get("photoUrl").asText()
     }
 }

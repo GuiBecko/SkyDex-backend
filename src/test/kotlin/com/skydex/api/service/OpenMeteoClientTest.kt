@@ -29,6 +29,13 @@ class OpenMeteoClientTest {
     /** Released in teardown so a deliberately stalled handler cannot outlive its test. */
     private val release = CountDownLatch(1)
 
+    /**
+     * The query string of the last request `respondWith`'s handler received. Populated
+     * unconditionally on every call, but only asserted on by the test that needs to pin what the
+     * client actually requested — the other tests here only care about the response.
+     */
+    private var capturedQuery: String? = null
+
     @BeforeEach
     fun startServer() {
         server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
@@ -43,6 +50,7 @@ class OpenMeteoClientTest {
 
     private fun respondWith(body: String) {
         server.createContext("/") { exchange ->
+            capturedQuery = exchange.requestURI.query
             val bytes = body.toByteArray()
             exchange.responseHeaders.add("Content-Type", "application/json")
             exchange.sendResponseHeaders(200, bytes.size.toLong())
@@ -115,5 +123,63 @@ class OpenMeteoClientTest {
         assertEquals(-30.0346, forecast?.latitude)
         assertEquals(listOf(95), forecast?.hourly?.weatherCode)
         assertEquals(listOf(19.0), forecast?.hourly?.temperatureCelsius)
+    }
+
+    /**
+     * Night is the one condition under which the photo check is skipped entirely, so the capture
+     * path cannot work without this series. Asking for it costs nothing: the call to Open-Meteo is
+     * already being made for the weather code.
+     */
+    @Test
+    fun `requests the is_day series and parses it`() {
+        respondWith(
+            """
+            {
+              "latitude": -30.0,
+              "longitude": -51.0,
+              "hourly": {
+                "time": ["2026-08-16T14:00"],
+                "temperature_2m": [21.0],
+                "weather_code": [95],
+                "is_day": [1]
+              }
+            }
+            """.trimIndent()
+        )
+        val client = OpenMeteoClient(baseUrl)
+
+        val response = client.fetchHourlyForecast(-30.0, -51.0)
+
+        // Pins the request half of this test's name: without this, the assertion below would
+        // pass even if the client stopped asking Open-Meteo for is_day at all, because this
+        // throwaway server returns whatever body the test hands it regardless of what was
+        // requested. Dropping is_day from the query silently re-enables the night photo check,
+        // since a missing series is deliberately read as daylight — so this must fail loudly.
+        assertEquals(true, capturedQuery?.contains("is_day"))
+        assertEquals(listOf(1), response?.hourly?.isDay)
+    }
+
+    /**
+     * A cached or proxied response from before this field was requested. Missing daylight
+     * information must not fail the parse — the caller defaults to treating it as day.
+     */
+    @Test
+    fun `tolerates a response with no is_day series`() {
+        respondWith(
+            """
+            {
+              "latitude": -30.0,
+              "longitude": -51.0,
+              "hourly": {
+                "time": ["2026-08-16T14:00"],
+                "temperature_2m": [21.0],
+                "weather_code": [95]
+              }
+            }
+            """.trimIndent()
+        )
+        val client = OpenMeteoClient(baseUrl)
+
+        assertEquals(emptyList<Int?>(), client.fetchHourlyForecast(-30.0, -51.0)?.hourly?.isDay)
     }
 }

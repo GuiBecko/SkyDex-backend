@@ -30,9 +30,9 @@ class WeatherEventDtosTest {
 
     @Test
     fun `composes the base url onto a stored relative path`() {
-        val response = WeatherEventResponse.from(event("/api/photos/abc.jpg"), author, "http://<host>:8080")
+        val response = WeatherEventResponse.from(event("/api/photos/abc.jpg"), author, "http://backend.test:8080")
 
-        assertEquals("http://<host>:8080/api/photos/abc.jpg", response.photoUrl)
+        assertEquals("http://backend.test:8080/api/photos/abc.jpg", response.photoUrl)
     }
 
     @Test

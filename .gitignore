@@ -48,3 +48,9 @@ bin/
 ### SkyDex ###
 # Uploaded capture photos are runtime data, never source.
 data/photos/
+
+### Local tooling — never source ###
+CLAUDE.md
+.claude/
+.superpowers/
+.idea/

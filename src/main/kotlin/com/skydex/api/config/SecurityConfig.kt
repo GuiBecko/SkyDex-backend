@@ -44,6 +44,16 @@ class SecurityConfig(
                 auth.requestMatchers("/auth/**").permitAll()
                 auth.requestMatchers("/error").permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/photos/**").permitAll()
+                // Readiness probes cannot carry a token. The Docker HEALTHCHECK, compose's
+                // `depends_on: service_healthy` and any orchestrator all need to ask "are you
+                // serving?" before a user exists to authenticate as -- and without this line
+                // they get 401 forever and the container never reports healthy.
+                //
+                // Deliberately `/actuator/health` and not `/actuator/**`: every other endpoint
+                // stays authenticated. Paired with `show-details=never` in
+                // application.properties, the public answer is exactly `{"status":"UP"}` --
+                // no component breakdown, no database state, no disk figures, no version.
+                auth.requestMatchers("/actuator/health").permitAll()
                 auth.anyRequest().authenticated()
             }
             // Second layer behind PhotoStorageService's magic-byte check. Uploaded photos are
